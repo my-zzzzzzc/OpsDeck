@@ -1,0 +1,75 @@
+/*
+ * OpsDeck 主题桥接层。
+ *
+ * 设计令牌来自 Twenty(packages/twenty-ui/src/theme/),原样引入不做改动:
+ *   - twenty-light.css / twenty-dark.css  原子色阶 + 语义变量
+ *
+ * 本文件只做一件事:把 Twenty 的 `--t-*` 变量映射成 Tailwind v4 的工具类,
+ * 这样组件里可以写 `bg-primary`、`text-secondary`,而不必记住 `--t-` 前缀。
+ */
+
+/* Twenty 的令牌按 .light / .dark 类作用域定义,这里与 data-theme 对齐 */
+
+@theme inline {
+  /* ---- 背景层级 ---- */
+  --color-primary: var(--t-background-primary);
+  --color-secondary: var(--t-background-secondary);
+  --color-tertiary: var(--t-background-tertiary);
+  --color-quaternary: var(--t-background-quaternary);
+  --color-inverted: var(--t-background-inverted-primary);
+  --color-danger-bg: var(--t-background-danger);
+
+  /* 半透明叠加层:用于 hover、选中、分隔 */
+  --color-overlay-strong: var(--t-background-transparent-strong);
+  --color-overlay-medium: var(--t-background-transparent-medium);
+  --color-overlay-light: var(--t-background-transparent-light);
+  --color-overlay-lighter: var(--t-background-transparent-lighter);
+
+  /* 语义化的浅色底:用于徽标与提示条 */
+  --color-tint-danger: var(--t-background-transparent-danger);
+  --color-tint-blue: var(--t-background-transparent-blue);
+  --color-tint-orange: var(--t-background-transparent-orange);
+  --color-tint-success: var(--t-background-transparent-success);
+
+  /*
+   * 卡片内的凹陷面 —— Bento 卡片里嵌在外层白卡中的浅灰方块。
+   *
+   * 层级用"底色深浅"表达,而不是"再加一道描边":一层描边只说明
+   * "这是一块区域",一层底色才说明"这块区域属于上面那张卡"。
+   *
+   * 取半透明叠加色而不是写死的灰:它在浅色下是白卡上压一层黑、
+   * 深色下是深卡上提一层白,两个主题自动落在正确的方向上,不必各写一份。
+   */
+  --color-sunken: var(--t-background-transparent-light);
+
+  /* ---- 文字 ---- */
+  --color-ink: var(--t-font-color-primary);
+  --color-ink-secondary: var(--t-font-color-secondary);
+  --color-ink-tertiary: var(--t-font-color-tertiary);
+  --color-ink-inverted: var(--t-font-color-inverted);
+  --color-ink-danger: var(--t-font-color-danger);
+  --color-ink-success: var(--t-color-green11);
+  --color-ink-warning: var(--t-color-orange11);
+
+  /* ---- 边框 ---- */
+  --color-line: var(--t-border-color-medium, var(--t-background-transparent-medium));
+  --color-line-strong: var(--t-border-color-strong, var(--t-background-transparent-strong));
+  --color-line-danger: var(--t-border-color-danger);
+
+  /* ---- 品牌主色 ---- */
+  --color-accent: var(--t-color-blue9);
+  --color-accent-hover: var(--t-color-blue10);
+  --color-accent-soft: var(--t-color-blue4);
+  --color-on-accent: #ffffff;
+
+  /* ---- 圆角(沿用 Twenty 刻度)---- */
+  --radius-xs: var(--t-border-radius-xs);
+  --radius-sm: var(--t-border-radius-sm);
+  --radius-md: var(--t-border-radius-md);
+  --radius-lg: var(--t-border-radius-lg);
+
+  /* ---- 动效时长(沿用 Twenty 刻度)---- */
+  --duration-instant: calc(var(--t-animation-duration-instant) * 1s);
+  --duration-fast: calc(var(--t-animation-duration-fast) * 1s);
+  --duration-normal: calc(var(--t-animation-duration-normal) * 1s);
+}

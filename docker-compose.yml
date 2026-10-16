@@ -1,0 +1,88 @@
+# 生产部署:后端 + 数据库 + 反向代理(自动 HTTPS)
+#
+# 用法:
+#   cp .env.example .env        # 填入 SECRET_KEY / 域名 / Dify 配置
+#   docker compose up -d --build
+#
+# 内存预算(2 核 4G 机器足够):
+#   postgres ~100MB, api ~200MB, caddy ~20MB
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: opsdeck-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-opsdeck}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-opsdeck}
+    volumes:
+      - opsdeck-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-opsdeck} -d ${POSTGRES_DB:-opsdeck}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # 仅在内部网络暴露,不映射到宿主机
+    expose:
+      - "5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opsdeck-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-opsdeck}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-opsdeck}
+      SECRET_KEY: ${SECRET_KEY:?必须在 .env 中设置 SECRET_KEY}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-720}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: "false"
+      # 同域部署时前端与 API 同源,CORS 不是必需的;保留配置以便拆分部署
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      DIFY_BASE_URL: ${DIFY_BASE_URL:-}
+      DIFY_TOOL_TOKEN: ${DIFY_TOOL_TOKEN:-}
+      DIFY_TOOLS_ENABLED: ${DIFY_TOOLS_ENABLED:-true}
+      METRIC_RETENTION_DAYS: ${METRIC_RETENTION_DAYS:-30}
+      EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-90}
+      # 容器内通过 SSH 操作被管服务器,需要挂载私钥(见 docker-compose 的 volumes)
+      SSH_KEY_PATH: ${SSH_KEY_PATH:-}
+    expose:
+      - "8000"
+    volumes:
+      # 挂载 SSH 私钥用于远程操作。整个 ~/.ssh 只读挂载,避免复制私钥。
+      - ${SSH_DIR:-~/.ssh}:/root/.ssh:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: opsdeck-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # 形如 ops.example.com。设为 :80 可关闭自动 HTTPS(仅内网测试用)。
+      SITE_ADDRESS: ${SITE_ADDRESS:?必须在 .env 中设置 SITE_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  opsdeck-pgdata:
+  caddy-data:
+  caddy-config:

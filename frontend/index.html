@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpsDeck · 服务器与项目管理台</title>
+    <script>
+      // 在首帧前确定主题,避免深浅色闪烁。
+      // Dify 令牌按 html[data-theme] 作用域定义,这里把系统偏好映射过去。
+      ;(function () {
+        var mq = window.matchMedia('(prefers-color-scheme: dark)')
+        var apply = function (dark) {
+          var root = document.documentElement
+          // 同时设置 data-theme(应用)与 class(Twenty 令牌作用域)
+          root.setAttribute('data-theme', dark ? 'dark' : 'light')
+          root.classList.toggle('dark', dark)
+          root.classList.toggle('light', !dark)
+        }
+        apply(mq.matches)
+        mq.addEventListener('change', function (e) {
+          apply(e.matches)
+        })
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!--
+      AI 助手挂件(独立构建,React 18)。
+
+      以独立文件引入而非并入主包,原因:
+        - 主应用是 React 19,挂件是 React 18,同包会冲突
+        - 挂件可单独更新,不必重新构建主应用
+      它自行挂载到 #opsdeck-chat-widget,不影响主应用 DOM。
+    -->
+    <link rel="stylesheet" href="/widget/chat-widget.css" />
+    <script src="/widget/chat-widget.js" defer data-launcher="bubble" data-label="AI 助手"></script>
+  </body>
+</html>

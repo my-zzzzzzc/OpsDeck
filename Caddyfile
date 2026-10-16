@@ -1,0 +1,24 @@
+{
+  # 自动为 SITE_ADDRESS 申请并续期 Let's Encrypt 证书。
+  # 内网/测试时把 SITE_ADDRESS 设为 :80,则走 HTTP 不申请证书。
+  {$SITE_ADDRESS} {
+    encode zstd gzip
+
+    # 安全响应头
+    header {
+      X-Frame-Options "DENY"
+      X-Content-Type-Options "nosniff"
+      Referrer-Policy "strict-origin-when-cross-origin"
+      -Server
+    }
+
+    # 关闭响应缓冲,否则 SSE 流式对话会被攒批,失去逐字输出效果
+    reverse_proxy api:8000 {
+      flush_interval -1
+      # 流式响应可能较长,放宽读超时
+      transport http {
+        read_timeout 300s
+      }
+    }
+  }
+}

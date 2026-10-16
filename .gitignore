@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+.DS_Store
+
+# 终端会话录制:运行时产物,由 cleanup_recordings() 定期清理
+recordings/

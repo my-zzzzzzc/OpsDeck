@@ -1,0 +1,23 @@
+# OpsDeck 本地开发环境
+# 用法: docker compose -f docker-compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: opsdeck-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: opsdeck
+      POSTGRES_PASSWORD: opsdeck
+      POSTGRES_DB: opsdeck
+    ports:
+      - "5432:5432"
+    volumes:
+      - opsdeck-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsdeck -d opsdeck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  opsdeck-pgdata:

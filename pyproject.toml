@@ -1,0 +1,52 @@
+[project]
+name = "opsdeck"
+version = "0.1.0"
+description = "OpsDeck — self-hosted server & project management console with Dify-powered assistance"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi>=0.121.0",
+    "uvicorn[standard]>=0.40.0",
+    "sqlalchemy>=2.0.44",
+    "alembic>=1.18.0",
+    "psycopg[binary]>=3.2.12",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.11.0",
+    "httpx>=0.28.1",
+    "python-multipart>=0.0.20",
+    "python-jose[cryptography]>=3.5.0",
+    "bcrypt>=5.0.0",
+    "asyncssh>=2.24.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.0",
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI 依赖注入必须写成默认参数形式(Depends(...)),这是框架要求而非缺陷。
+# 注意:需要同时列出直接调用与包装后的依赖工厂,否则 Depends(require(...)) 仍会告警。
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "app.auth.require",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# 让 tests/ 能 import app 包
+pythonpath = ["."]

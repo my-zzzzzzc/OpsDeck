@@ -1,0 +1,118 @@
+/*
+ * OpsDeck 样式入口。
+ *
+ * 三层结构:
+ *   1. Tailwind v4
+ *   2. Twenty 的设计令牌(色阶、间距、圆角、动效时长)
+ *   3. HeroUI 的组件样式
+ *
+ * 组件观感以 Twenty 的令牌为准,HeroUI 只提供交互与结构,
+ * 因此 bridge 层把 `--t-*` 变量映射成 Tailwind 工具类。
+ */
+
+@import 'tailwindcss';
+
+/* Twenty 令牌:按 .light / .dark 类作用域提供变量 */
+@import './styles/twenty-light.css' layer(base);
+@import './styles/twenty-dark.css' layer(base);
+
+/* 把 Twenty 变量映射为 Tailwind 工具类 */
+@import './styles/theme-bridge.css';
+
+/* HeroUI 组件样式 */
+@import '@heroui/react/styles';
+
+/*
+ * 主题切换。
+ *
+ * Twenty 用 .light / .dark 类;这里统一到 html[data-theme],
+ * 并把两者对齐,避免组件库与令牌各认一套选择器。
+ */
+html {
+  color-scheme: light dark;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/*
+ * 图表配色。
+ *
+ * 色值**直接取自 Beszel**(internal/site/src/index.css 的 :root)。
+ * 注意 Beszel 只在 :root 定义 --chart-1..5,.dark 里**不覆盖** ——
+ * 也就是说深浅两色共用同一组色值,这是刻意的,这里照搬。
+ *
+ * 这是**分类色**(categorical),不是状态色 —— 只表示"这是第几条线",不表示好坏。
+ * 所以刻意没有复用 --t-ink-success / -warning / -danger:
+ * 那三个是阈值语义,混进来之后"橙色的线"会被读成"这条线有问题"。
+ *
+ * 顺序不能改:Beszel 的各个图表按编号取色 ——
+ *   CPU=1 蓝、内存=2 绿、磁盘=4 紫、磁盘 IO 写=3 橙 读=1 蓝、Swap=2 绿。
+ */
+html {
+  --chart-1: hsl(220 70% 50%); /* 蓝 */
+  --chart-2: hsl(160 60% 45%); /* 绿 */
+  --chart-3: hsl(30 80% 55%); /* 橙 */
+  --chart-4: hsl(280 65% 60%); /* 紫 */
+  --chart-5: hsl(340 75% 55%); /* 玫红 */
+}
+
+@layer base {
+  body {
+    /*
+     * 页面底色用 tertiary(#F1F1F1)而不是 secondary(#FCFCFC)。
+     *
+     * secondary 与卡片的 primary(#FFFFFF)只差 1.2%,白卡片浮在白底上等于没有层级 ——
+     * 整页糊成一张纸,只能靠 0.5px 的描边勉强分辨。换到 tertiary 之后
+     * 卡片自然"浮"起来,页面立刻有了图形/背景的关系。
+     */
+    @apply bg-tertiary text-ink antialiased;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+      sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* 数字等宽:指标纵向比对时对齐 */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* 键盘焦点必须可见 —— 可访问性要求 */
+  :focus-visible {
+    outline: 2px solid var(--t-color-blue9);
+    outline-offset: 1px;
+  }
+}
+
+@layer utilities {
+  /* 滚动条跟随主题 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--t-font-color-tertiary) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--t-background-transparent-strong);
+    border-radius: 4px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
