@@ -10,3 +10,14 @@ dist/
 
 # 终端会话录制:运行时产物,由 cleanup_recordings() 定期清理
 recordings/
+
+# ---- 部署与运维本地文件 ----
+# 这些是本机部署时产生的,含私钥与凭据,绝不能进仓库
+.ssh/
+.opsdeck-keys/
+.shots/
+.collector-tokens.json
+.deploy-env-cache.json
+.env.local-backup
+.env.*.local
+scripts/

@@ -6,14 +6,18 @@ import {
   type EventItem,
   type Instance,
   type Metric,
-  type Overview,
+  type Project,
   type Server,
   type User,
 } from './api'
 import {
-  SpecStrip,
-  type SpecCell,
-} from './dashboard'
+  AlertBar,
+  ContainerGrid,
+  TrendRow,
+  eventsToAlerts,
+  pctSeries,
+  seriesDelta,
+} from './dashboard-parts'
 import { AuditPanel } from './panels/AuditPanel'
 import { ChatPanel } from './panels/ChatPanel'
 import { DifyPanel } from './panels/DifyPanel'
@@ -33,6 +37,7 @@ import {
   IconSunMoon,
 } from './icons'
 import { FadeIn, PageSkeleton } from './motion'
+import { ratio } from './health'
 import { HeaderMetaProvider } from './header-meta'
 import { NAV_GROUPS, NAV_ITEMS, TAB_META, type Tab } from './nav'
 import { BlankPanel } from './panels/BlankPanel'
@@ -42,7 +47,7 @@ import { RemoteTerminalDialog } from './panels/RemoteTerminalDialog'
 import { NotificationBell } from './NotificationBell'
 import { Sidebar, SidebarDrawer } from './Sidebar'
 import { THEME_ORDER, useTheme } from './theme'
-import { GhostButton, IconButton, PageHeader } from './ui'
+import { GhostButton, IconButton, PageHeader, Card, StatusDot } from './ui'
 
 /*
  * 页签的定义搬到了 `nav.tsx`。
@@ -75,9 +80,13 @@ function Dashboard({
   alerts: ReturnType<typeof useAlerts>
 }) {
   const { servers, unacked: unackedEvents } = alerts
-  const [overview, setOverview] = useState<Overview | null>(null)
   const [instances, setInstances] = useState<Instance[]>([])
   const [metrics, setMetrics] = useState<Metric[]>([])
+  /**
+   * 项目列表。只用来把容器归属回服务器 ——
+   * Instance 上只有 project_id,没有 server_id,必须借 projects 中转。
+   */
+  const [projects, setProjects] = useState<Project[]>([])
   /** 各服务器近 24 小时的指标。既供首页的机队曲线,也用来算数据覆盖率。 */
   const [histories, setHistories] = useState<Map<string, Metric[]>>(new Map())
   const [error, setError] = useState<string | null>(null)
@@ -99,10 +108,10 @@ function Dashboard({
   const load = useCallback(async (showBusy = false) => {
     if (showBusy) setBusy(true)
     try {
-      const [o, i, m] = await Promise.all([api.overview(), api.instances(), api.latestMetrics()])
-      setOverview(o)
+      const [i, m, p] = await Promise.all([api.instances(), api.latestMetrics(), api.projects()])
       setInstances(i)
       setMetrics(m)
+      setProjects(p)
       setError(null)
       setLastUpdated(new Date())
     } catch (err) {
@@ -185,56 +194,42 @@ function Dashboard({
     )
   }
 
-  const running = instances.filter((i) => i.state === 'running').length
-  const stopped = instances.length - running
-  const online = overview?.servers_online ?? 0
-  const offline = overview?.servers_offline ?? 0
-  const fleetMulti = servers.length > 1
+  /*
+   * 仪表板只展示「本机」。
+   *
+   * 这是一处**本部署的自定义改动**(上游 OpsDeck 会列出全部服务器):
+   * 这台 OpsDeck 同时纳管生产机,两台的卡片并排会把版面撑成机队视角,
+   * 而日常最常看的是 OpsDeck 自己所在机器的水位。
+   *
+   * 过滤只发生在前端展示层:
+   *   - 被过滤掉的服务器**仍在采集**、数据仍在库里、告警照常产生;
+   *   - 「服务器」页仍能看到全部机器并逐台下钻。
+   * 也就是说这只是"首页看哪台",不是"监控哪台"。
+   *
+   * 判定顺序:先按 id 精确匹配(最稳),再回退到"名称含本机标记"与
+   * "IP 等于 OpsDeck 自身地址"。都匹配不到时**回退为展示全部** ——
+   * 宁可多显示一台,也不要因为改名就把首页变成一片空白。
+   */
+  const SELF_SERVER_ID = '4e675d8d-9814-4d4b-9911-024465850182'
+  const SELF_IP = '42.193.241.34'
 
-  const cores = servers.reduce((a, s) => a + (s.cpu_cores ?? 0), 0)
-  const memTotalGb = servers.reduce((a, s) => a + (s.mem_total_mb ?? 0), 0) / 1024
-  const osList = [...new Set(servers.map((s) => s.os_info).filter((v): v is string => !!v))]
-  const histCovered = [...histories.values()].filter((l) =>
-    l.some((p) => p.cpu_percent !== null),
-  ).length
+  const selfServers = servers.filter(
+    (s) => s.id === SELF_SERVER_ID || s.name.includes('本机') || s.ip === SELF_IP,
+  )
+  const shown = selfServers.length > 0 ? selfServers : servers
 
   /*
-   * 身份带。显示机队总体规模与接入情况。
+   * 顶部汇总与卡片网格都基于 `shown`,否则会出现
+   * 「顶部说 2 台、下面只有 1 张卡」这种自相矛盾的版面。
    */
-  const specCells: SpecCell[] = [
-    {
-      label: '服务器',
-      value: `${online}/${servers.length}`,
-      sub: offline > 0 ? `${offline} 台离线` : servers.length > 0 ? '全部在线' : '尚未接入',
-      tone: offline > 0 ? 'bad' : servers.length > 0 ? 'ok' : 'neutral',
-    },
-    {
-      label: '系统',
-      value: osList.length === 1 ? osList[0] : osList.length === 0 ? '—' : `${osList.length} 种`,
-      sub: osList.length > 1 ? osList[0] : undefined,
-    },
-    {
-      label: 'CPU',
-      value: cores > 0 ? `${cores} 核` : '—',
-      sub: fleetMulti ? `${servers.length} 台合计` : undefined,
-    },
-    {
-      label: '内存',
-      value: memTotalGb > 0 ? `${memTotalGb.toFixed(0)} GB` : '—',
-      sub: fleetMulti ? `${servers.length} 台合计` : undefined,
-    },
-    {
-      label: '容器',
-      value: `${running}/${instances.length}`,
-      sub: stopped > 0 ? `${stopped} 已退出` : instances.length > 0 ? '全部运行中' : '暂无容器',
-      tone: stopped > 0 ? 'warn' : 'neutral',
-    },
-    {
-      label: '采集',
-      value: lastUpdated ? <RelativeTime at={lastUpdated} /> : '—',
-      sub: servers.length > 0 ? `24h 覆盖 ${histCovered}/${servers.length} 台` : undefined,
-    },
-  ]
+  const online = shown.filter((s) => s.status === 'online').length
+  const offline = shown.length - online
+
+  /*
+   * 身份带。单机视角下回答的是「这台机器有多大、数据有多新」,
+   * 而不是机队规模 —— 所以不再出现「N 台合计」这类合并数字。
+   */
+  const selfServer = shown.length === 1 ? shown[0] : null
 
   if (detailServer) {
     return (
@@ -247,6 +242,44 @@ function Dashboard({
   }
 
   const metricMap = new Map(metrics.map((m) => [m.server_id, m]))
+
+  /*
+   * 告警条的数据源。
+   *
+   * 两类合并:
+   *   1. 后端产生的事件(离线 / 阈值 / 容器退出)
+   *   2. 前端即时可见的「容器不健康」—— 采集器把 health=unhealthy 上报了,
+   *      但后端目前不为它生成事件(见 detection.py 只处理 exited)。
+   *      warp 这种"跑着但隧道不通"的容器,不在这里补一条就完全不可见。
+   */
+  const alertRows = eventsToAlerts(
+    unackedEvents,
+    (id) => servers.find((s) => s.id === id)?.name,
+  )
+
+  const unhealthy = instances.filter(
+    (i) => i.state !== 'running' || i.health === 'unhealthy' || i.health === 'starting',
+  )
+  const derivedRows = unhealthy.map((i) => {
+    const proj = projects.find((p) => p.id === i.project_id)
+    const srv = proj ? servers.find((s) => s.id === proj.server_id) : undefined
+    const stopped = i.state !== 'running'
+    return {
+      key: `inst-${i.id}`,
+      level: (stopped || i.health === 'unhealthy' ? 'critical' : 'warning') as 'critical' | 'warning',
+      title: stopped
+        ? `容器未运行: ${i.name}`
+        : i.health === 'unhealthy'
+          ? `容器不健康: ${i.name}`
+          : `容器启动中: ${i.name}`,
+      detail: stopped
+        ? `状态 ${i.state}。检查容器日志确认退出原因。`
+        : '健康检查持续失败,服务可能不可用。',
+      source: srv?.name,
+    }
+  })
+
+  const allAlerts = [...derivedRows, ...alertRows]
 
   return (
     <div className="flex flex-col gap-5">
@@ -263,16 +296,30 @@ function Dashboard({
         </div>
       ) : null}
 
-      {/* 顶部总览状态卡片 */}
-      <SpecStrip cells={specCells} />
+      {/*
+        首屏第一块就是告警条 —— 它回答「现在要不要我动手」。
+        原来的静态规格带(几核/几 GB)下移到服务器卡片标题行:
+        那些值装完就不变,占着首屏最贵的位置却没有信息量。
+      */}
+      <AlertBar alerts={allAlerts} hasData={shown.length > 0 && online > 0} />
+
+      {/* 容器:带所属服务器,异常排前 */}
+      <ContainerGrid
+        instances={instances}
+        projects={projects}
+        servers={servers}
+        onSelectServer={setDetailServer}
+      />
 
       {/* 单服务器独立卡片网格 */}
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-ink">服务器节点状态</span>
+            <span className="text-[13px] font-semibold text-ink">
+              {shown.length === 1 && selfServer ? selfServer.name : '服务器节点状态'}
+            </span>
             <span className="rounded-xs bg-overlay-light px-1.5 py-0.5 text-[11px] text-ink-tertiary">
-              {online} 在线 · {offline} 离线 · 共 {servers.length} 台
+              {online} 在线 · {offline} 离线 · 共 {shown.length} 台
             </span>
           </div>
           <span className="text-[11.5px] text-ink-tertiary">
@@ -280,13 +327,13 @@ function Dashboard({
           </span>
         </div>
 
-        {servers.length === 0 ? (
+        {shown.length === 0 ? (
           <div className="rounded-lg border border-line bg-primary p-8 text-center text-[13px] text-ink-tertiary">
             还没有接入服务器。
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
-            {servers.map((s) => (
+          <div className={`grid gap-4 ${shown.length > 1 ? 'sm:grid-cols-2 xl:grid-cols-2' : ''}`}>
+            {shown.map((s) => (
               <ServerCard
                 key={s.id}
                 server={s}
@@ -300,6 +347,105 @@ function Dashboard({
           </div>
         )}
       </section>
+
+      {/*
+        资源水位 + 24h 趋势。
+
+        卡片上的水位条只说「此刻多少」,这一块补上「在涨还是在跌」——
+        Swap 42% 如果是涨上来的,那才是要处理的事;一直 42% 则只是现状。
+        迷你曲线是纯形状,不画坐标轴:它的作用是让眼睛看出方向,
+        精确读数由上方的百分比和 Δ 承担。
+      */}
+      {shown.length > 0 ? (
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold text-ink">资源水位</span>
+            <span className="rounded-xs bg-overlay-light px-1.5 py-0.5 text-[11px] text-ink-tertiary">
+              近 24 小时 · 对比首尾
+            </span>
+            <span className="ml-auto text-[11.5px] text-ink-tertiary">
+              阈值 70% 警告 · 85% 严重
+            </span>
+          </div>
+
+          {shown.map((s) => {
+            const hist = histories.get(s.id) ?? []
+            const m = metricMap.get(s.id)
+            const cpuSeq = pctSeries(hist, 'cpu')
+            const memSeq = pctSeries(hist, 'mem')
+            const diskSeq = pctSeries(hist, 'disk')
+            const swapSeq = pctSeries(hist, 'swap')
+
+            const memPct = ratio(m?.mem_used_mb, m?.mem_total_mb)
+            const diskPct = ratio(m?.disk_used_gb, m?.disk_total_gb)
+            const swapPct = ratio(m?.swap_used_mb, m?.swap_total_mb)
+
+            return (
+              <Card key={s.id} padded={false} className="px-3.5 py-2.5">
+                <div className="mb-1 flex items-center gap-2">
+                  <StatusDot status={s.status === 'online' ? 'online' : s.status === 'offline' ? 'offline' : 'unknown'} />
+                  <span className="truncate text-[12.5px] font-medium text-ink">{s.name}</span>
+                  <span className="mono truncate text-[11px] text-ink-tertiary">
+                    {s.ip ?? s.hostname ?? '—'}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[11px] text-ink-tertiary">
+                    {s.cpu_cores ? `${s.cpu_cores} 核` : ''}
+                    {s.mem_total_mb ? ` · ${(s.mem_total_mb / 1024).toFixed(1)} GB` : ''}
+                    {s.os_info ? ` · ${s.os_info}` : ''}
+                  </span>
+                </div>
+
+                <div className="divide-y divide-line/60">
+                  <TrendRow
+                    label="CPU"
+                    icon={<IconGauge size={12} />}
+                    pct={m?.cpu_percent ?? null}
+                    detail={m?.load_1 != null ? `负载 ${m.load_1.toFixed(2)}` : undefined}
+                    delta={seriesDelta(cpuSeq)}
+                    spark={cpuSeq}
+                  />
+                  <TrendRow
+                    label="内存"
+                    icon={<IconActivity size={12} />}
+                    pct={memPct}
+                    detail={
+                      m?.mem_used_mb != null && m?.mem_total_mb != null
+                        ? `${(m.mem_used_mb / 1024).toFixed(1)} / ${(m.mem_total_mb / 1024).toFixed(1)} GB`
+                        : undefined
+                    }
+                    delta={seriesDelta(memSeq)}
+                    spark={memSeq}
+                  />
+                  <TrendRow
+                    label="磁盘"
+                    icon={<IconActivity size={12} />}
+                    pct={diskPct}
+                    detail={
+                      m?.disk_used_gb != null && m?.disk_total_gb != null
+                        ? `${m.disk_used_gb.toFixed(0)} / ${m.disk_total_gb.toFixed(0)} GB`
+                        : undefined
+                    }
+                    delta={seriesDelta(diskSeq)}
+                    spark={diskSeq}
+                  />
+                  <TrendRow
+                    label="Swap"
+                    icon={<IconRefresh size={12} />}
+                    pct={swapPct}
+                    detail={
+                      m?.swap_used_mb != null && m?.swap_total_mb != null && m.swap_total_mb > 0
+                        ? `${(m.swap_used_mb / 1024).toFixed(1)} / ${(m.swap_total_mb / 1024).toFixed(1)} GB`
+                        : '未启用'
+                    }
+                    delta={seriesDelta(swapSeq)}
+                    spark={swapSeq}
+                  />
+                </div>
+              </Card>
+            )
+          })}
+        </section>
+      ) : null}
 
       {/* 终端弹窗 */}
       {terminalServer ? (
