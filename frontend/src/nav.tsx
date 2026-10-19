@@ -101,7 +101,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: '容器',
         description: '容器实例、镜像与运行状态',
         Icon: IconContainer,
-        ready: false,
+        ready: true,
       },
       {
         key: 'terminals',

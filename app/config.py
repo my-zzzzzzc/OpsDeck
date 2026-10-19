@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     metric_retention_days: int = 30
     # 已处理事件的保留天数
     event_retention_days: int = 90
+    # 是否启用内置后台调度(告警检测与数据清理)。
+    # 本地开发若指向生产库,应设为 false,否则会重复跑检测并修改生产数据。
+    scheduler_enabled: bool = True
 
     @property
     def terminal_ip_allowlist_list(self) -> list[str]:

@@ -10,3 +10,6 @@ dist/
 
 # 终端会话录制:运行时产物,由 cleanup_recordings() 定期清理
 recordings/
+
+# TypeScript 增量构建缓存(tsc -b 生成)。本地产物,不该进版本库。
+*.tsbuildinfo

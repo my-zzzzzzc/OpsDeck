@@ -18,6 +18,8 @@ export default defineConfig({
     },
   },
   server: {
+    // 显式绑定 IPv4,否则 Node 只监听 IPv6 的 [::1],127.0.0.1 将无法访问
+    host: '127.0.0.1',
     port: 5173,
     // 开发期把 /api 代理到后端,避免本地 CORS 配置
     proxy: {

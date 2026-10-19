@@ -16,6 +16,12 @@ class ServerBase(BaseModel):
     hostname: str | None = Field(default=None, max_length=255)
     ip: str | None = Field(default=None, max_length=64)
     ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_user: str = Field(
+        default="root",
+        max_length=64,
+        pattern=r"^[A-Za-z0-9._-]+$",
+        description="SSH 登录用户名。默认 root;只允许 ubuntu 登录的镜像需改成 ubuntu。",
+    )
     ssh_key_path: str | None = Field(
         default=None,
         max_length=512,
@@ -42,6 +48,7 @@ class ServerUpdate(BaseModel):
     hostname: str | None = Field(default=None, max_length=255)
     ip: str | None = Field(default=None, max_length=64)
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    ssh_user: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
     ssh_key_path: str | None = Field(default=None, max_length=512)
     os_info: str | None = Field(default=None, max_length=255)
     cpu_cores: int | None = Field(default=None, ge=1)
