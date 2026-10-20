@@ -128,7 +128,7 @@ export function ChatPanel() {
     return (
       <Card>
         <Empty>
-          还没有登记可用的 Dify 应用。请先在「Dify」页登记应用并填入 API Key ——
+          还没有可用的 AI 助手。请管理员先在「Dify 接入」页登记应用并填入 API Key ——
           每个应用对应一个独立助手(如升级助手、巡检助手)。
         </Empty>
       </Card>

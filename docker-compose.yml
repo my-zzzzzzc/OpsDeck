@@ -49,6 +49,8 @@ services:
       DIFY_BASE_URL: ${DIFY_BASE_URL:-}
       DIFY_TOOL_TOKEN: ${DIFY_TOOL_TOKEN:-}
       DIFY_TOOLS_ENABLED: ${DIFY_TOOLS_ENABLED:-true}
+      # GitHub Release 检测的只读令牌(可选)
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       METRIC_RETENTION_DAYS: ${METRIC_RETENTION_DAYS:-30}
       EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-90}
       # 容器内通过 SSH 操作被管服务器,需要挂载私钥(见 docker-compose 的 volumes)

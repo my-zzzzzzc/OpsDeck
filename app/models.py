@@ -115,6 +115,55 @@ class Project(Base, TimestampMixin):
     instances: Mapped[list["Instance"]] = relationship(
         back_populates="project", cascade="all, delete-orphan", passive_deletes=True
     )
+    update_config: Mapped["ProjectUpdateConfig | None"] = relationship(
+        back_populates="project", cascade="all, delete-orphan", passive_deletes=True, uselist=False
+    )
+
+
+class ProjectUpdateConfig(Base, TimestampMixin):
+    """项目的更新来源与最近一次检测结果(一对一)。
+
+    更新是**项目级**概念:Dify 的 postgres / redis / nginx 是它的内部依赖,
+    不应各自弹出一条"可更新"。因此一个项目只有一个权威更新来源。
+
+    `confirmed` 区分"系统猜的"和"人确认过的":自动识别只作为建议,
+    未确认的配置不会进入检测,避免把错误的来源当成事实。
+    """
+
+    __tablename__ = "project_update_configs"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_project_update_configs_project"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # git / registry / release / manual
+    source_type: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual", nullable=False)
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    auto_detected: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+
+    # git: 远端地址与分支;release: GitHub owner/repo;registry: 完整镜像引用
+    repo_url: Mapped[str | None] = mapped_column(String(512))
+    branch: Mapped[str | None] = mapped_column(String(128))
+    image_ref: Mapped[str | None] = mapped_column(String(255))
+    upstream_repo: Mapped[str | None] = mapped_column(String(255))
+
+    # 当前版本 / 最新版本。git 存 commit,registry 存 digest,release 存 tag。
+    current_version: Mapped[str | None] = mapped_column(String(128))
+    latest_version: Mapped[str | None] = mapped_column(String(128))
+
+    # unknown / up_to_date / update_available / check_failed / manual
+    status: Mapped[str] = mapped_column(String(32), default="unknown", server_default="unknown", nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text)
+    release_url: Mapped[str | None] = mapped_column(String(512))
+    # 附加信息:commit、digest、release notes 等。结构随来源不同,不参与查询。
+    extra: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped[Project] = relationship(back_populates="update_config")
 
 
 class Instance(Base):

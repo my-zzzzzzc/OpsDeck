@@ -319,7 +319,7 @@ export function ContainersPanel({ user }: { user: User }) {
           <Boxes className="mx-auto mb-2 size-6 text-ink-tertiary" />
           <p className="text-[13px] text-ink-secondary">还没有采集到任何容器</p>
           <p className="mt-1 text-[11.5px] text-ink-tertiary">
-            采集器每 30 秒上报一次;容器只有在「部署」页登记了对应项目后才会被纳入。
+            采集器每 30 秒上报一次;容器只有在「项目」页登记了对应项目后才会被纳入。
           </p>
         </Card>
       ) : rows.length === 0 ? (

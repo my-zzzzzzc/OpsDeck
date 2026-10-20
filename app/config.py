@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Dify 工具接口的访问令牌(留空则使用已登录用户的 JWT)
     dify_tool_token: str = ""
 
+    # GitHub API 只读令牌。Release 检测不配置也能用,但未认证时每小时仅 60 次。
+    github_token: str = ""
+
     # 前端构建产物目录。生产镜像中由 Dockerfile 复制到 /app/static。
     static_dir: str = "static"
 

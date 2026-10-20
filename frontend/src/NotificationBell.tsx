@@ -8,7 +8,7 @@ import { Badge, Empty } from './ui'
  * 通知中心。
  *
  * 告警原本是看板下方的一张长卡片,只在首页可见 —— 翻到「服务器」页时,
- * 信息就断了。这里把它收进页头的一枚铃铛:入口常驻,明细按需展开。
+ * 信息就断了。这里把它收进顶栏的一枚铃铛:入口常驻,明细按需展开。
  *
  * 三个刻意的选择:
  *
@@ -147,22 +147,23 @@ export function NotificationBell({
   const serverName = (id: string | null) => servers.find((s) => s.id === id)?.name ?? null
 
   return (
-    <div ref={wrapRef} className="relative">
+    // 外层保持 static:浮层以顶栏为定位基准,窄屏下右对齐也不会越出左边
+    <div ref={wrapRef}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={hasIssue ? `${unacked.length} 条未读告警` : '通知,无未读'}
         aria-expanded={open}
         title={hasIssue ? `${unacked.length} 条未读告警` : '通知'}
-        className={`relative flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-[0.5px] transition-colors ${
+        className={`relative flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors ${
           hasIssue
             ? isBad
-              ? 'border-line-danger bg-tint-danger text-ink-danger'
-              : 'border-line-strong bg-tint-orange text-ink-warning'
-            : 'border-line bg-primary text-ink-tertiary hover:bg-overlay-light hover:text-ink'
+              ? 'bg-tint-danger text-ink-danger'
+              : 'bg-tint-orange text-ink-warning'
+            : 'text-ink-tertiary hover:bg-overlay-light hover:text-ink'
         }`}
       >
-        <IconBell size={14} />
+        <IconBell size={17} />
         {/*
           角标只报数量,颜色只区分"严重 / 注意"。
           没读的时候整个铃铛回到中性态 —— 一个常亮的红点等于没有红点。

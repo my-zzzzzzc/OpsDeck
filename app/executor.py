@@ -31,10 +31,17 @@ class ExecResult:
     output: str
 
 
-def execute(server: Server, command: str, *, ssh_key_path: str = "") -> ExecResult:
+def execute(
+    server: Server,
+    command: str,
+    *,
+    ssh_key_path: str = "",
+    timeout: int = COMMAND_TIMEOUT,
+) -> ExecResult:
     """在目标服务器上执行命令并返回输出。
 
     密钥优先级:显式参数 > 服务器配置的 ssh_key_path > ssh 默认凭据。
+    timeout 可按操作覆盖:构建镜像可能远超普通命令的 120 秒。
     """
     if shutil.which("ssh") is None:
         return ExecResult(False, -1, "本机未安装 ssh 客户端,无法执行远程操作")
@@ -60,7 +67,9 @@ def execute(server: Server, command: str, *, ssh_key_path: str = "") -> ExecResu
     key = ssh_key_path or server.ssh_key_path or ""
     if key:
         argv += ["-i", key, "-o", "IdentitiesOnly=yes"]
-    argv += [f"root@{target}", command]
+    # 用户名必须取自服务器配置:部分云镜像禁用 root,只能以 ubuntu 登录。
+    user = server.ssh_user or "root"
+    argv += [f"{user}@{target}", command]
 
     logger.info("在 %s 上执行: %s", server.name, command)
 
@@ -69,11 +78,11 @@ def execute(server: Server, command: str, *, ssh_key_path: str = "") -> ExecResu
             argv,
             capture_output=True,
             text=True,
-            timeout=COMMAND_TIMEOUT,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return ExecResult(False, -1, f"命令执行超时(超过 {COMMAND_TIMEOUT} 秒)")
+        return ExecResult(False, -1, f"命令执行超时(超过 {timeout} 秒)")
     except OSError as exc:
         return ExecResult(False, -1, f"无法启动 ssh: {exc}")
 

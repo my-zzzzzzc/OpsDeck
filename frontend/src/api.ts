@@ -23,6 +23,7 @@ export interface Server {
 export interface Project {
   id: string
   server_id: string
+  server_name: string | null
   name: string
   kind: 'docker-compose' | 'docker' | 'systemd' | 'binary'
   work_dir: string | null
@@ -34,6 +35,12 @@ export interface Project {
   depends_on: string[] | null
   tags: string[] | null
   note: string | null
+  last_deploy_at: string | null
+  last_deploy_status: 'running' | 'success' | 'failed' | 'rejected' | null
+  last_deploy_username: string | null
+  update_source: 'git' | 'release' | 'registry' | 'manual' | null
+  update_status: 'unknown' | 'up_to_date' | 'update_available' | 'check_failed' | 'manual' | null
+  update_branch: string | null
   created_at: string
   updated_at: string
 }
@@ -130,7 +137,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const resp = await fetch(`${BASE}${path}`, { ...init, headers: { ...headers, ...init?.headers } })
+  let resp: Response
+  try {
+    resp = await fetch(`${BASE}${path}`, { ...init, headers: { ...headers, ...init?.headers } })
+  } catch {
+    // fetch 只在网络层失败时抛异常;浏览器原文是 "Failed to fetch",不该直接给用户看
+    throw new Error('无法连接服务器,请检查后端服务与数据库连接')
+  }
 
   if (resp.status === 401) {
     // 令牌失效:清掉本地状态并通知上层跳登录
@@ -140,10 +153,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!resp.ok) {
-    const detail = await resp.json().catch(() => ({ detail: resp.statusText }))
-    const msg = Array.isArray(detail.detail)
-      ? detail.detail.map((d: { msg: string }) => d.msg).join('; ')
-      : (detail.detail ?? `请求失败: ${resp.status}`)
+    const body = await resp.json().catch(() => null)
+    const detail = body?.detail
+    const msg = Array.isArray(detail)
+      ? detail.map((d: { msg: string }) => d.msg).join('; ')
+      : typeof detail === 'string' && detail
+        ? detail
+        : `请求失败(${resp.status})`
     throw new Error(msg)
   }
 
@@ -220,6 +236,105 @@ export const DANGER_LABEL: Record<string, string> = {
   high: '高风险',
 }
 
+export type UpdateSource = 'git' | 'registry' | 'release' | 'manual'
+export type UpdateStatus = 'unknown' | 'up_to_date' | 'update_available' | 'check_failed' | 'manual'
+
+export interface UpdateConfig {
+  id: string
+  project_id: string
+  source_type: UpdateSource
+  confirmed: boolean
+  auto_detected: boolean
+  repo_url: string | null
+  branch: string | null
+  image_ref: string | null
+  upstream_repo: string | null
+  current_version: string | null
+  latest_version: string | null
+  status: UpdateStatus
+  detail: string | null
+  release_url: string | null
+  extra: Record<string, unknown> | null
+  last_checked_at: string | null
+  last_success_at: string | null
+}
+
+/** 更新页的一行:项目 + 所属服务器 + 已采集镜像 + 更新配置。 */
+export interface UpdateProject {
+  project_id: string
+  project_name: string
+  server_id: string
+  server_name: string | null
+  kind: string
+  work_dir: string | null
+  images: string[]
+  config: UpdateConfig | null
+}
+
+/** 自动识别结果。只是建议,必须由人确认后才保存。 */
+export interface UpdateSuggestion {
+  source_type: UpdateSource
+  repo_url: string | null
+  branch: string | null
+  image_ref: string | null
+  upstream_repo: string | null
+  current_version: string | null
+  reason: string
+  images: string[]
+}
+
+export interface UpdateApplyResult {
+  ok: boolean
+  message: string
+  output: string | null
+  command: string | null
+  config: UpdateConfig | null
+}
+
+/* ---------------------------------------------------------------- 部署 */
+
+export type DeploySource = 'existing' | 'git'
+
+export interface DeployPreflightPayload {
+  server_id: string
+  name: string
+  source: DeploySource
+  work_dir: string
+  compose_file?: string | null
+  repo_url?: string | null
+  branch?: string | null
+}
+
+export interface DeployPayload extends DeployPreflightPayload {
+  url?: string | null
+  note?: string | null
+}
+
+export interface DeployCheck {
+  key: string
+  label: string
+  ok: boolean
+  detail: string
+}
+
+export interface DeployPreflight {
+  ok: boolean
+  checks: DeployCheck[]
+  command: string
+  work_dir: string
+}
+
+export interface DeployResult {
+  ok: boolean
+  message: string
+  command: string
+  output: string | null
+  /** 命令成功但登记失败时为 null。 */
+  project: Project | null
+  /** Git 来源部署成功后自动创建的更新配置。 */
+  config: UpdateConfig | null
+}
+
 export interface TerminalStatus {
   available: boolean
   reason: string | null
@@ -275,6 +390,19 @@ export const api = {
     request<Server>(`/servers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   projects: (serverId?: string) =>
     request<Project[]>(`/projects${serverId ? `?server_id=${serverId}` : ''}`),
+
+  // 部署
+  deployPreflight: (body: DeployPreflightPayload) =>
+    request<DeployPreflight>('/deployments/preflight', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deployProject: (body: DeployPayload) =>
+    request<DeployResult>('/deployments', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, confirm: true }),
+    }),
+
   latestMetrics: () => request<Metric[]>('/metrics/latest'),
   /**
    * 指标历史。
@@ -312,6 +440,21 @@ export const api = {
   executeAction: (body: { project_id: string; action: string; confirm?: boolean }) =>
     request<ActionLogItem>('/actions/execute', { method: 'POST', body: JSON.stringify(body) }),
   actionLogs: (limit = 50) => request<ActionLogItem[]>(`/actions/logs?limit=${limit}`),
+
+  // 更新
+  updates: () => request<UpdateProject[]>('/updates'),
+  updateHistory: (limit = 30) => request<ActionLogItem[]>(`/updates/history?limit=${limit}`),
+  detectUpdate: (projectId: string) =>
+    request<UpdateSuggestion>(`/updates/${projectId}/detect`, { method: 'POST' }),
+  saveUpdateConfig: (projectId: string, body: Record<string, unknown>) =>
+    request<UpdateConfig>(`/updates/${projectId}`, { method: 'PUT', body: JSON.stringify(body) }),
+  checkUpdate: (projectId: string) =>
+    request<UpdateConfig>(`/updates/${projectId}/check`, { method: 'POST' }),
+  applyUpdate: (projectId: string) =>
+    request<UpdateApplyResult>(`/updates/${projectId}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    }),
 
   // Web 终端
   terminalStatus: () => request<TerminalStatus>('/terminal/status'),

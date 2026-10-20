@@ -128,12 +128,23 @@ class ProjectUpdate(BaseModel):
 
 
 class ProjectRead(ProjectBase):
-    """项目读取模型。"""
+    """项目读取模型。
+
+    卡片摘要字段是列表接口临时计算的,不落库:
+    历史部署记录与更新配置分别来自 action_logs / project_update_configs。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     server_id: uuid.UUID
+    server_name: str | None = None
+    last_deploy_at: datetime | None = None
+    last_deploy_status: str | None = None
+    last_deploy_username: str | None = None
+    update_source: str | None = None
+    update_status: str | None = None
+    update_branch: str | None = None
     created_at: datetime
     updated_at: datetime
 

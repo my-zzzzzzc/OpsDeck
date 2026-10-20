@@ -29,6 +29,7 @@ import { DifyPanel } from './panels/DifyPanel'
 import { ContainersPanel } from './panels/ContainersPanel'
 import { ProjectsPanel } from './panels/ProjectsPanel'
 import { ServersPanel } from './panels/ServersPanel'
+import { UpdatesPanel } from './panels/UpdatesPanel'
 import { UsersPanel } from './panels/UsersPanel'
 import {
   IconActivity,
@@ -585,9 +586,9 @@ function LiveBadge({ stale }: { stale: boolean }) {
  *
  * 提到应用层而不是留在看板里,有两个理由:
  *
- * 1. **通知入口要跨页可用。** 铃铛挂在页头,用户在「服务器」「部署」页时
+ * 1. **通知入口要跨页可用。** 铃铛挂在顶栏,用户在「服务器」「项目」页时
  *    同样需要看到"有几条没读"。数据如果锁在 Dashboard 里,换个页签就瞎了。
- * 2. **两个消费者必须同源。** 页头铃铛的角标、通知面板里的列表,
+ * 2. **两个消费者必须同源。** 顶栏铃铛的角标、通知面板里的列表,
  *    以及看板读数格里的「未读告警」,都读这一个 `events` ——
  *    各拉各的迟早会出现"角标写 3、列出来只有 2 条"。
  *
@@ -691,6 +692,7 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
           onLogout={onLogout}
           onOpenNav={() => setNavOpen(true)}
           canSee={canSee}
+          alerts={alerts}
         />
 
         {/* 不要给这一行加 items-start:侧边栏靠 sticky 跟随滚动,
@@ -726,29 +728,16 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
                   ) : null
                 }
                 actions={
-                  <span className="flex items-center gap-1">
-                    {/*
-                      通知入口。常驻在页头 —— 告警不属于某一页,
-                      翻到「服务器」「部署」时同样需要知道有几条没读。
-                    */}
-                    <NotificationBell
-                      events={alerts.events}
-                      servers={alerts.servers}
-                      unacked={alerts.unacked}
-                      critical={alerts.critical}
-                      onAck={alerts.ack}
-                    />
-                    {tab === 'dashboard' ? (
-                      <IconButton
-                        label="刷新数据"
-                        onClick={meta.refresh}
-                        disabled={meta.busy}
-                        spinning={meta.busy}
-                      >
-                        <IconRefresh size={14} />
-                      </IconButton>
-                    ) : null}
-                  </span>
+                  tab === 'dashboard' ? (
+                    <IconButton
+                      label="刷新数据"
+                      onClick={meta.refresh}
+                      disabled={meta.busy}
+                      spinning={meta.busy}
+                    >
+                      <IconRefresh size={14} />
+                    </IconButton>
+                  ) : undefined
                 }
               />
             </header>
@@ -759,6 +748,7 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
                 {tab === 'containers' ? <ContainersPanel user={user} /> : null}
                 {tab === 'servers' ? <ServersPanel user={user} /> : null}
                 {tab === 'deployments' ? <ProjectsPanel user={user} catalog={catalog} /> : null}
+                {tab === 'updates' ? <UpdatesPanel user={user} /> : null}
                 {tab === 'chat' ? <ChatPanel /> : null}
                 {tab === 'dify' && isAdmin ? <DifyPanel /> : null}
                 {tab === 'users' && isAdmin ? <UsersPanel currentUser={user} /> : null}
@@ -801,6 +791,7 @@ function TopNav({
   onLogout,
   onOpenNav,
   canSee,
+  alerts,
 }: {
   tab: Tab
   setTab: (t: Tab) => void
@@ -808,6 +799,7 @@ function TopNav({
   onLogout: () => void
   onOpenNav: () => void
   canSee: (k: Tab) => boolean
+  alerts: ReturnType<typeof useAlerts>
 }) {
   const { theme, setTheme } = useTheme()
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -866,7 +858,7 @@ function TopNav({
 
   return (
     <>
-      <nav className="my-4 flex h-14 items-center gap-3 rounded-lg border border-line bg-primary px-4 pe-3 sm:h-16 sm:px-6">
+      <nav className="relative my-4 flex h-14 items-center gap-3 rounded-lg border border-line bg-primary px-4 pe-3 sm:h-16 sm:px-6">
         {/* 汉堡:窄屏侧边栏收成抽屉,入口得留在这里 */}
         <button
           type="button"
@@ -910,8 +902,15 @@ function TopNav({
           </button>
         </div>
 
-        {/* 右侧:主题 + 用户 */}
+        {/* 右侧:通知 + 主题 + 用户。告警不属于某一页,入口只留全局这一枚 */}
         <div className="flex shrink-0 items-center gap-1">
+          <NotificationBell
+            events={alerts.events}
+            servers={alerts.servers}
+            unacked={alerts.unacked}
+            critical={alerts.critical}
+            onAck={alerts.ack}
+          />
           <button
             type="button"
             onClick={() => setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length])}

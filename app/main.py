@@ -16,12 +16,14 @@ from app.api import (
     auth,
     chat,
     container_logs,
+    deployments,
     dify_tools,
     health,
     observability,
     projects,
     servers,
     terminal,
+    updates,
 )
 from app.bootstrap import ensure_initial_admin
 from app.config import settings
@@ -77,8 +79,14 @@ def create_app() -> FastAPI:
     app.include_router(servers.router, prefix="/api")
     app.include_router(projects.router, prefix="/api")
 
+    # 受控部署(仅管理员)
+    app.include_router(deployments.router, prefix="/api")
+
     # 观测数据
     app.include_router(observability.router, prefix="/api")
+
+    # 更新检测与受控升级
+    app.include_router(updates.router, prefix="/api")
 
     # Dify 接入
     app.include_router(chat.router, prefix="/api")

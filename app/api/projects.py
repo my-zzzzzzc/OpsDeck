@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.audit import record_audit
 from app.auth import client_ip, require
 from app.db import get_db
-from app.models import Project, Server, User
+from app.models import ActionLog, Project, ProjectUpdateConfig, Server, User
 from app.schemas.assets import ProjectCreate, ProjectRead, ProjectUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -23,21 +23,71 @@ def _get_project_or_404(db: Session, project_id: uuid.UUID) -> Project:
     return project
 
 
+def _with_card_meta(db: Session, projects: list[Project]) -> list[ProjectRead]:
+    """给项目补上卡片需要的服务器名、最近部署与更新摘要。
+
+    最近部署只认 project_id 关联:按项目名反查会在多服务器同名时张冠李戴。
+    """
+    if not projects:
+        return []
+
+    project_ids = [project.id for project in projects]
+    server_names = dict(
+        db.execute(select(Server.id, Server.name).where(Server.id.in_({p.server_id for p in projects}))).all()
+    )
+
+    latest_deploys: dict[uuid.UUID, ActionLog] = {}
+    deploy_logs = db.scalars(
+        select(ActionLog)
+        .where(ActionLog.project_id.in_(project_ids), ActionLog.action == "deploy")
+        .order_by(ActionLog.created_at.desc(), ActionLog.id.desc())
+    )
+    for log in deploy_logs:
+        if log.project_id is not None:
+            latest_deploys.setdefault(log.project_id, log)
+
+    configs = {
+        config.project_id: config
+        for config in db.scalars(
+            select(ProjectUpdateConfig).where(ProjectUpdateConfig.project_id.in_(project_ids))
+        )
+    }
+
+    reads: list[ProjectRead] = []
+    for project in projects:
+        log = latest_deploys.get(project.id)
+        config = configs.get(project.id)
+        reads.append(
+            ProjectRead.model_validate(project).model_copy(
+                update={
+                    "server_name": server_names.get(project.server_id),
+                    "last_deploy_at": log.created_at if log else None,
+                    "last_deploy_status": log.status if log else None,
+                    "last_deploy_username": log.username if log else None,
+                    "update_source": config.source_type if config else None,
+                    "update_status": config.status if config else None,
+                    "update_branch": config.branch if config else None,
+                }
+            )
+        )
+    return reads
+
+
 @router.get("", response_model=list[ProjectRead], summary="项目列表")
 def list_projects(
     db: Session = Depends(get_db),
     _: User = Depends(require("view")),
     server_id: uuid.UUID | None = Query(default=None, description="按服务器筛选"),
     tag: str | None = Query(default=None, description="按标签筛选"),
-) -> list[Project]:
-    """返回项目列表,可按服务器或标签筛选。"""
+) -> list[ProjectRead]:
+    """返回项目列表,可按服务器或标签筛选。附带卡片摘要。"""
     stmt = select(Project).order_by(Project.name)
     if server_id is not None:
         stmt = stmt.where(Project.server_id == server_id)
     if tag is not None:
         stmt = stmt.where(Project.tags.contains([tag]))
 
-    return list(db.scalars(stmt))
+    return _with_card_meta(db, list(db.scalars(stmt)))
 
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED, summary="新增项目")
