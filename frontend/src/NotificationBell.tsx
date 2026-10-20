@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { EVENT_KIND_LABEL, type EventItem, type Server } from './api'
-import { IconAlert, IconAlertOctagon, IconBell, IconCheck, IconCheckCircle } from './icons'
+import { IconAlert, IconAlertOctagon, IconBell, IconBellRing, IconCheck, IconCheckCircle } from './icons'
 import { Badge, Empty } from './ui'
 
 /*
@@ -53,7 +53,7 @@ function groupEvents(events: EventItem[]) {
       label: string
       event: EventItem
       count: number
-      unread: number
+      ids: number[]
       members: string[]
     }
   >()
@@ -64,7 +64,7 @@ function groupEvents(events: EventItem[]) {
 
     if (existing) {
       existing.count += 1
-      if (!e.acknowledged) existing.unread += 1
+      existing.ids.push(e.id)
       const subject = subjectOf(e.title)
       if (subject && !existing.members.includes(subject)) existing.members.push(subject)
       // events 按时间倒序返回,首次遇到的就是最新
@@ -75,7 +75,7 @@ function groupEvents(events: EventItem[]) {
         label: EVENT_KIND_LABEL[e.kind] ?? e.kind,
         event: e,
         count: 1,
-        unread: e.acknowledged ? 0 : 1,
+        ids: [e.id],
         members: subject ? [subject] : [],
       })
     }
@@ -111,14 +111,18 @@ export function NotificationBell({
   unacked,
   critical,
   onAck,
+  onAckAll,
 }: {
   events: EventItem[]
   servers: Server[]
   unacked: EventItem[]
   critical: number
   onAck: (id: number) => void | Promise<void>
+  /** 批量已读。首页不再铺告警条,这个动作收进浮层。 */
+  onAckAll?: () => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
+  const [ackAllBusy, setAckAllBusy] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
 
   // 点外部 / Esc 关闭。仪表盘是常驻页面,浮层不关掉会一直挡着内容。
@@ -138,13 +142,27 @@ export function NotificationBell({
     }
   }, [open])
 
-  const groups = useMemo(() => groupEvents(events), [events])
-  const unreadGroups = useMemo(() => groups.filter((g) => g.unread > 0), [groups])
-  const readGroups = useMemo(() => groups.filter((g) => g.unread === 0), [groups])
+  /*
+   * 未读与已读分开分组。
+   *
+   * 之前先对全部事件分组、再按 unread 过滤:组里的计数和「涉及」会混入
+   * 已读事件,于是出现「头写 2 条未读、行写 ×50」的错觉。现在未读组只由
+   * `unacked` 生成,计数就是未读次数;已读组只用于页脚计数。
+   */
+  const unreadGroups = useMemo(() => groupEvents(unacked), [unacked])
+  const readGroups = useMemo(
+    () => groupEvents(events.filter((e) => e.acknowledged)),
+    [events],
+  )
 
   const hasIssue = unacked.length > 0
   const isBad = critical > 0
   const serverName = (id: string | null) => servers.find((s) => s.id === id)?.name ?? null
+
+  /** 一组里可能有多条事件,逐条 ack;每条的乐观更新与刷新由 onAck 负责。 */
+  const ackGroup = async (ids: number[]) => {
+    for (const id of ids) await onAck(id)
+  }
 
   return (
     // 外层保持 static:浮层以顶栏为定位基准,窄屏下右对齐也不会越出左边
@@ -163,14 +181,15 @@ export function NotificationBell({
             : 'text-ink-tertiary hover:bg-overlay-light hover:text-ink'
         }`}
       >
-        <IconBell size={17} />
+        {hasIssue ? <IconBellRing size={16} strokeWidth={1.8} /> : <IconBell size={16} />}
         {/*
           角标只报数量,颜色只区分"严重 / 注意"。
           没读的时候整个铃铛回到中性态 —— 一个常亮的红点等于没有红点。
+          角标外圈留一道页面底色,和铃铛的 tint 底隔开,小尺寸下也能读清。
         */}
         {hasIssue ? (
           <span
-            className={`absolute -end-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold text-on-accent ${
+            className={`absolute -end-1.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold text-on-accent ring-2 ring-tertiary ${
               isBad ? 'bg-ink-danger' : 'bg-ink-warning'
             }`}
           >
@@ -194,7 +213,27 @@ export function NotificationBell({
               {hasIssue ? `${unacked.length} 条未读告警` : '没有未读告警'}
             </span>
             {critical > 0 ? <Badge tone="bad">{critical} 严重</Badge> : null}
-            <span className="ms-auto text-[11px] text-ink-tertiary">共 {events.length} 条</span>
+            <div className="ms-auto flex shrink-0 items-center gap-2">
+              <span className="text-[11px] text-ink-tertiary">共 {events.length} 条</span>
+              {hasIssue && onAckAll ? (
+                <button
+                  type="button"
+                  disabled={ackAllBusy}
+                  onClick={async () => {
+                    setAckAllBusy(true)
+                    try {
+                      await onAckAll()
+                    } finally {
+                      setAckAllBusy(false)
+                    }
+                  }}
+                  className="flex cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium text-ink-secondary transition-colors hover:bg-overlay-light hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <IconCheck size={11} />
+                  全部已读
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -262,7 +301,7 @@ export function NotificationBell({
 
                     <button
                       type="button"
-                      onClick={() => void onAck(g.event.id)}
+                      onClick={() => void ackGroup(g.ids)}
                       title="标记这一组为已读"
                       className="mt-0.5 flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] text-ink-tertiary transition-colors hover:bg-tint-blue hover:text-accent"
                     >

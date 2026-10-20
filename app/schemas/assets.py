@@ -149,4 +149,22 @@ class ProjectRead(ProjectBase):
     updated_at: datetime
 
 
+class ProjectConfigRead(BaseModel):
+    """项目的可编辑配置文件。机密内容仅向管理者返回。"""
+
+    kind: ProjectKind
+    compose_file: str | None = None
+    compose_content: str | None = None
+    env_content: str | None = None
+    editable: bool
+    message: str | None = None
+
+
+class ProjectConfigUpdate(BaseModel):
+    """只接受 Compose 文件和同目录 .env，字段未传则不修改。"""
+
+    compose_content: str | None = Field(default=None, max_length=262_144)
+    env_content: str | None = Field(default=None, max_length=262_144)
+
+
 ServerWithProjects.model_rebuild()

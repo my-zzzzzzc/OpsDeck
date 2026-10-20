@@ -45,6 +45,15 @@ export interface Project {
   updated_at: string
 }
 
+export interface ProjectConfig {
+  kind: Project['kind']
+  compose_file: string | null
+  compose_content: string | null
+  env_content: string | null
+  editable: boolean
+  message: string | null
+}
+
 export interface Overview {
   servers_total: number
   servers_online: number
@@ -90,6 +99,9 @@ export interface InstanceDetail extends Instance {
   project_name: string | null
   server_id: string | null
   server_name: string | null
+  /** 当前采集器可能尚未上报，缺失时前端展示为「—」。 */
+  started_at: string | null
+  exit_code: number | null
 }
 
 export interface EventItem {
@@ -403,6 +415,11 @@ export const api = {
       body: JSON.stringify({ ...body, confirm: true }),
     }),
 
+  // 项目工作区配置
+  projectConfig: (id: string) => request<ProjectConfig>(`/projects/${id}/config`),
+  updateProjectConfig: (id: string, body: { compose_content?: string; env_content?: string }) =>
+    request<ProjectConfig>(`/projects/${id}/config`, { method: 'PUT', body: JSON.stringify(body) }),
+
   latestMetrics: () => request<Metric[]>('/metrics/latest'),
   /**
    * 指标历史。
@@ -439,7 +456,7 @@ export const api = {
   actionCatalog: () => request<ActionCatalogItem[]>('/actions/catalog'),
   executeAction: (body: { project_id: string; action: string; confirm?: boolean }) =>
     request<ActionLogItem>('/actions/execute', { method: 'POST', body: JSON.stringify(body) }),
-  actionLogs: (limit = 50) => request<ActionLogItem[]>(`/actions/logs?limit=${limit}`),
+  actionLogs: (limit = 50, projectId?: string) => request<ActionLogItem[]>(`/actions/logs?limit=${limit}${projectId ? `&project_id=${projectId}` : ''}`),
 
   // 更新
   updates: () => request<UpdateProject[]>('/updates'),

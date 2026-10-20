@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronRight,
   ExternalLink,
+  FolderOpen,
   Loader2,
   Lock,
   Play,
@@ -30,6 +31,7 @@ import { cn } from '../cn'
 import { useHeaderMeta } from '../header-meta'
 import { Badge, Card, Empty, GhostButton, PrimaryButton, Skeleton } from '../ui'
 import { DeployDialog } from './DeployDialog'
+import { ProjectWorkspaceDialog } from './ProjectWorkspaceDialog'
 
 /*
  * 「项目」页。
@@ -395,6 +397,7 @@ export function ProjectsPanel({
   const [running, setRunning] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [deployOpen, setDeployOpen] = useState(false)
+  const [workspace, setWorkspace] = useState<Project | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
@@ -465,7 +468,8 @@ export function ProjectsPanel({
     }
   }
 
-  const actions = catalog.filter((action) => action.enabled)
+  // 日志收进项目工作区,不再占用卡片底栏的操作位
+  const actions = catalog.filter((action) => action.enabled && action.key !== 'logs')
   const readActions = actions.filter((action) => action.read_only)
   const writeActions = actions.filter((action) => !action.read_only)
   const actionLabels = Object.fromEntries(catalog.map((action) => [action.key, action.label]))
@@ -699,6 +703,15 @@ export function ProjectsPanel({
                   </div>
 
                   <div className="mt-auto flex items-center gap-0.5 border-t border-line bg-secondary/40 px-1.5 py-1">
+                    <button
+                      type="button"
+                      onClick={() => setWorkspace(project)}
+                      title="打开项目工作区"
+                      aria-label={`${project.name} 打开项目`}
+                      className="flex size-7 cursor-pointer items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-overlay-light hover:text-ink"
+                    >
+                      <FolderOpen className="size-3.5" />
+                    </button>
                     {canOperate ? (
                       <>
                         {readActions.map((action) => renderAction(project, action))}
@@ -721,6 +734,15 @@ export function ProjectsPanel({
           </div>
         )}
       </section>
+
+      {workspace ? (
+        <ProjectWorkspaceDialog
+          project={workspace}
+          user={user}
+          catalog={catalog}
+          onClose={() => setWorkspace(null)}
+        />
+      ) : null}
 
       {msg ? (
         <div

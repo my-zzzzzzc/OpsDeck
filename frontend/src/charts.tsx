@@ -1,5 +1,5 @@
 import { History } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Area,
   AreaChart,
@@ -295,6 +295,8 @@ export function MetricAreaChart({
   domain,
   tickFormatter,
   valueFormatter,
+  gradient = false,
+  strokeWidth = 1,
 }: {
   data: ChartPoint[]
   time: ChartTime
@@ -302,10 +304,16 @@ export function MetricAreaChart({
   domain?: readonly [number, number | 'auto']
   tickFormatter?: (value: number) => string
   valueFormatter?: (value: number, key: string) => string
+  /** 面积改用纵向渐变。大图用,小图保持 Beszel 的平涂。 */
+  gradient?: boolean
+  /** 线宽。大图默认 1 太细,可以调到 1.5–2。 */
+  strokeWidth?: number
 }) {
   const { ref, visible } = useVisibility()
   const { yAxisWidth, updateYAxisWidth } = useYAxisWidth()
   const [frozen, setFrozen] = useState(data)
+  // SVG id 不能带 React useId 的冒号
+  const gradientId = useId().replace(/:/g, '')
 
   useEffect(() => {
     if (visible || frozen.length === 0) setFrozen(data)
@@ -344,6 +352,23 @@ export function MetricAreaChart({
     >
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={frozen} margin={CHART_MARGIN} accessibilityLayer>
+          {gradient ? (
+            <defs>
+              {series.map((s) => (
+                <linearGradient
+                  key={s.key}
+                  id={`${gradientId}-${s.key}`}
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop offset="0%" stopColor={s.color} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={s.color} stopOpacity={0.02} />
+                </linearGradient>
+              ))}
+            </defs>
+          ) : null}
           {/* 不传 stroke:颜色由外层 CHART_SURFACE_CLS 的 CSS 选择器给,和 Beszel 一致 */}
           <CartesianGrid vertical={false} />
 
@@ -384,10 +409,10 @@ export function MetricAreaChart({
               type="monotoneX"
               dataKey={s.key}
               name={s.label}
-              fill={s.color}
-              fillOpacity={s.opacity ?? 0.4}
+              fill={gradient ? `url(#${gradientId}-${s.key})` : s.color}
+              fillOpacity={gradient ? 1 : (s.opacity ?? 0.4)}
               stroke={s.color}
-              strokeWidth={1}
+              strokeWidth={strokeWidth}
               // 关闭动画:指标每 15 秒刷新一次,动画会导致持续闪烁
               isAnimationActive={false}
               activeDot={{ r: 3, strokeWidth: 0 }}
@@ -638,22 +663,31 @@ export function ChartTimeSelect({
   value,
   onChange,
   className,
+  compact = false,
 }: {
   value: ChartTime
   onChange: (t: ChartTime) => void
   className?: string
+  /** 紧凑档:28px 高,用于看板卡片头。 */
+  compact?: boolean
 }) {
   return (
     <div className={cn('relative', className)}>
       <History
-        className="pointer-events-none absolute start-4 top-1/2 size-4 -translate-y-1/2 opacity-85"
+        className={cn(
+          'pointer-events-none absolute top-1/2 -translate-y-1/2 opacity-85',
+          compact ? 'start-2 size-3' : 'start-4 size-4',
+        )}
         aria-hidden
       />
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as ChartTime)}
         aria-label="时间范围"
-        className="h-9 w-full cursor-pointer appearance-none rounded-md border border-line bg-primary ps-10 pe-5 text-[13px] text-ink outline-none transition-colors hover:bg-overlay-light focus:border-accent"
+        className={cn(
+          'w-full cursor-pointer appearance-none rounded-md border border-line bg-primary text-ink outline-none transition-colors hover:bg-overlay-light focus:border-accent',
+          compact ? 'h-7 ps-7 pe-4 text-[11px]' : 'h-9 ps-10 pe-5 text-[13px]',
+        )}
       >
         {Object.entries(CHART_TIMES).map(([key, cfg]) => (
           <option key={key} value={key}>

@@ -37,6 +37,7 @@ def execute(
     *,
     ssh_key_path: str = "",
     timeout: int = COMMAND_TIMEOUT,
+    max_output: int = 20_000,
 ) -> ExecResult:
     """在目标服务器上执行命令并返回输出。
 
@@ -88,7 +89,7 @@ def execute(
 
     output = (proc.stdout or "") + (proc.stderr or "")
     # 限制入库长度,避免超长日志撑爆数据库
-    if len(output) > 20000:
-        output = output[:20000] + "\n...(输出已截断)"
+    if len(output) > max_output:
+        output = output[:max_output] + "\n...(输出已截断)"
 
     return ExecResult(proc.returncode == 0, proc.returncode, output or "(无输出)")
