@@ -190,6 +190,20 @@ export const IconBell = (p: IconProps) => (
   </Icon>
 )
 
+/**
+ * 有未读时的铃铛。
+ *
+ * 比只读态多了两道声波,配合铃铛本身的轮廓,让"它在响"这件事
+ * 不依赖角标也能读出来;颜色和角标仍然负责数量与严重度。
+ */
+export const IconBellRing = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M17.8 9.3a5.8 5.8 0 1 0-11.6 0c0 4.5-1.7 6-1.7 6h15s-1.7-1.5-1.7-6Z" />
+    <path d="M13.6 18.6a2 2 0 0 1-3.2 0" />
+    <path d="M3.2 6.2a9 9 0 0 1 2-2.8M20.8 6.2a9 9 0 0 0-2-2.8" />
+  </Icon>
+)
+
 /** 日程安排:日历。 */
 export const IconCalendar = (p: IconProps) => (
   <Icon {...p}>

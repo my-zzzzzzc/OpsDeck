@@ -31,7 +31,7 @@ class ExecResult:
     output: str
 
 
-def execute(server: Server, command: str, *, ssh_key_path: str = "") -> ExecResult:
+def execute(server: Server, command: str, *, ssh_key_path: str = "", max_output: int = 20_000) -> ExecResult:
     """在目标服务器上执行命令并返回输出。
 
     密钥优先级:显式参数 > 服务器配置的 ssh_key_path > ssh 默认凭据。
@@ -60,7 +60,8 @@ def execute(server: Server, command: str, *, ssh_key_path: str = "") -> ExecResu
     key = ssh_key_path or server.ssh_key_path or ""
     if key:
         argv += ["-i", key, "-o", "IdentitiesOnly=yes"]
-    argv += [f"root@{target}", command]
+    # 服务器表已保存登录用户；不能把所有连接都错误地固定为 root。
+    argv += [f"{server.ssh_user or 'root'}@{target}", command]
 
     logger.info("在 %s 上执行: %s", server.name, command)
 
@@ -79,7 +80,7 @@ def execute(server: Server, command: str, *, ssh_key_path: str = "") -> ExecResu
 
     output = (proc.stdout or "") + (proc.stderr or "")
     # 限制入库长度,避免超长日志撑爆数据库
-    if len(output) > 20000:
-        output = output[:20000] + "\n...(输出已截断)"
+    if len(output) > max_output:
+        output = output[:max_output] + "\n...(输出已截断)"
 
     return ExecResult(proc.returncode == 0, proc.returncode, output or "(无输出)")

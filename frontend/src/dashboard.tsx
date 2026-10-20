@@ -1,316 +1,647 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { Metric } from './api'
-import { MetricAreaChart, SERIES_COLOR } from './charts'
-import { CountUp } from './CountUp'
-import { HEALTH, levelOf, mean, ratio } from './health'
-import { Card, STAT_TONE, type StatTone } from './ui'
+import type { Metric, Server } from './api'
+import {
+  ChartTimeSelect,
+  CHART_TIMES,
+  MetricLineChart,
+  SERIES_COLOR,
+  type ChartPoint,
+  type ChartTime,
+} from './charts'
+import { cn } from './cn'
+import { HEALTH, levelOf, ratio } from './health'
+import {
+  IconActivity,
+  IconAlert,
+  IconAlertOctagon,
+  IconCheck,
+  IconClock,
+  IconCpu,
+  IconDisk,
+  IconMemory,
+  IconServer,
+  IconTerminal,
+} from './icons'
+import { Card, GhostButton, STAT_TONE, StatusDot } from './ui'
 
 /*
- * 首页「运行概览」的四块积木。
+ * 首页看板的表现层。
  *
- * 版式取自 DockPanel 的 dashboard:一条身份/规格带 → 三块大水位读数 →
- * 三张 24 小时曲线 → 一张密集读数网格。
+ * 这一版把「有没有事」提到最前面:一张状态卡给出结论、部署机身份和四项资源
+ * 的当前水位,下面是「趋势」与「容器」两个工作区。旧版是身份条 + 四张等大的
+ * 图表卡 + 容器卡片墙,九块内容同重、同底色,读者得自己找重点。
  *
- * 参考稿是**单机**面板,这里面对的是机队,所以每一处都显式交代
- * 「这是均值还是合计」—— 把多台机器的平均数读成某一台的具体数,
- * 是这类看板最容易撒的谎,而且撒得毫无痕迹。
- *
- * 三样东西刻意不抄:
- *   内核版本 / 温度 / 进程数、磁盘 IO、带宽。
- *   DockPanel 有,OpsDeck 的采集器不下发。编不出来就不画 ——
- *   一格「—」比一个假数字诚实,这条在 ui.tsx 里已经写过一次了。
+ * 三条硬规则保持不变:
+ *   - 正常值不上色。只有越过 70 / 85 阈值的那一项才拿到语义色。
+ *   - 缺失不画成 0。曲线断在 null 处,读数写「—」。
+ *   - 不编数据。采集器没下发的指标(温度 / 磁盘 IO / 带宽)这里没有。
  */
 
-/**
- * 机队序列上的一个时间点。
- *
- * 写成 `Record & {...}` 而不是 interface:interface **不参与** TS 的
- * 「隐式索引签名」推导,`FleetPoint[]` 传不进 `ChartPoint[]` 参数,
- * 报的错还是「缺少索引签名」这种看不出因果的话。
- */
-export type FleetPoint = Record<string, number | null> & {
-  created: number
-  cpu: number | null
-  mem: number | null
-  disk: number | null
+/** 部署机上的容器摘要。与 ContainerBoard 的 bad 口径保持一致。 */
+export interface HostContainerSummary {
+  total: number
+  running: number
+  bad: number
+}
+
+const LOAD_SERIES = [
+  { key: 'load_1', label: '1 分钟', color: 'hsl(271, 81%, 60%)' },
+  { key: 'load_5', label: '5 分钟', color: 'hsl(217, 91%, 60%)' },
+  { key: 'load_15', label: '15 分钟', color: 'hsl(25, 95%, 53%)' },
+] as const
+
+type Tone = 'ok' | 'warn' | 'bad'
+
+const STATUS_TONE: Record<Tone, { accent: string; orb: string; icon: ReactNode }> = {
+  ok: {
+    accent: 'bg-ink-success',
+    orb: 'bg-tint-success text-ink-success',
+    icon: <IconCheck size={20} />,
+  },
+  warn: {
+    accent: 'bg-ink-warning',
+    orb: 'bg-tint-orange text-ink-warning',
+    icon: <IconAlert size={20} />,
+  },
+  bad: {
+    accent: 'bg-ink-danger',
+    orb: 'bg-tint-danger text-ink-danger',
+    icon: <IconAlertOctagon size={20} />,
+  },
+}
+
+/** MB → GB 的展示值。缺失返回「—」,不返回 0。 */
+function memGb(v?: number | null): string {
+  return v != null ? (v / 1024).toFixed(1) : '—'
+}
+
+/** 从 points 里取一列,把 undefined / NaN 统一成 null。 */
+function column(points: ChartPoint[], key: string): Array<number | null> {
+  return points.map((p) => {
+    const v = p[key]
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  })
 }
 
 /**
- * 把「每台机器一条 24 小时序列」压成「机队一条序列」。
+ * 迷你走势线。
  *
- * 按**下标**对齐,而不是按时间戳:各台的桶由同一轮请求生成、窗口相同,
- * 但桶内采样时刻会差几秒 —— 按时间戳对齐会把同一条曲线错开成两条。
- *
- * 空桶(后端在没采到的时段返回各指标为 null)在求均值时被跳过;
- * 若整桶所有机器都是 null,结果仍是 null —— 曲线在那里断开,
- * 而不是掉到 0。「没采集到」和「一切正常」必须长得不一样。
+ * 用途是让「当前值」旁边有一点形状,而不是替代大图。
+ * 空值处**断开**,不连成一条直线 —— 采集器掉线看起来不该像机器很闲。
  */
-export function fleetSeries(histories: Map<string, Metric[]>): FleetPoint[] {
-  const lists = [...histories.values()].filter((l) => l.length > 0)
-  if (lists.length === 0) return []
+function Sparkline({
+  values,
+  color,
+  className,
+}: {
+  values: Array<number | null>
+  color: string
+  className?: string
+}) {
+  const W = 120
+  const H = 32
+  const finite = values.filter((v): v is number => v !== null)
 
-  const len = Math.max(...lists.map((l) => l.length))
-  const out: FleetPoint[] = []
-
-  for (let i = 0; i < len; i += 1) {
-    const at: number[] = []
-    const cpu: Array<number | null> = []
-    const mem: Array<number | null> = []
-    const disk: Array<number | null> = []
-
-    for (const list of lists) {
-      const m = list[i]
-      if (!m) continue
-
-      const t = new Date(m.captured_at).getTime()
-      // 时间戳坏掉的点整条丢掉:留着会把 X 轴拉成 NaN
-      if (Number.isFinite(t)) at.push(t)
-
-      cpu.push(m.cpu_percent)
-      mem.push(ratio(m.mem_used_mb, m.mem_total_mb))
-      disk.push(ratio(m.disk_used_gb, m.disk_total_gb))
-    }
-
-    out.push({
-      created: at.length > 0 ? Math.max(...at) : 0,
-      cpu: mean(cpu),
-      mem: mean(mem),
-      disk: mean(disk),
-    })
+  if (finite.length < 2) {
+    return (
+      <span className={cn('flex items-center justify-end text-[9.5px] text-ink-tertiary', className)}>
+        无历史
+      </span>
+    )
   }
 
-  return out
-}
+  const min = Math.min(...finite)
+  const max = Math.max(...finite)
+  const flat = max - min < 1e-9
+  const lo = flat ? min - 0.5 : min
+  const hi = flat ? max + 0.5 : max
+  const span = hi - lo || 1
 
-export interface SpecCell {
-  label: string
-  value: ReactNode
-  sub?: ReactNode
-  tone?: StatTone
-}
+  const xAt = (i: number) => (values.length <= 1 ? W / 2 : (i / (values.length - 1)) * (W - 2) + 1)
+  const yAt = (v: number) => H - 3 - ((v - lo) / span) * (H - 6)
 
-/**
- * 身份 / 规格带。
- *
- * 参考稿那一排是「HOSTNAME / OS / KERNEL / PROCESSOR / TEMPERATURE / PROCESSES」,
- * 这里换成本机队的同义事实:几台机器、什么系统、多少核、多少内存、容器跑着几个、
- * 数据有多新。
- *
- * 分隔线用 `gap-px` + 底色画,而不是给每个格子挂 border:后者在换行时
- * 会给第二行的第一个格子也描一条左边线,得靠 first-child / nth-child 去补,
- * 断点一多就补不干净。让**底色从缝里透出来**就没有这个问题。
- */
-export function SpecStrip({ cells }: { cells: SpecCell[] }) {
+  const segments: Array<Array<[number, number]>> = []
+  let segment: Array<[number, number]> = []
+  values.forEach((v, i) => {
+    if (v === null) {
+      if (segment.length) {
+        segments.push(segment)
+        segment = []
+      }
+      return
+    }
+    segment.push([xAt(i), yAt(v)])
+  })
+  if (segment.length) segments.push(segment)
+
+  const tail = segments.length ? segments[segments.length - 1] : null
+  const last = tail && tail.length ? tail[tail.length - 1] : null
+
   return (
-    <Card padded={false} className="overflow-hidden">
-      <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-3 lg:grid-cols-6">
-        {cells.map((c) => (
-          <div key={c.label} className="min-w-0 bg-primary px-3.5 py-2.5">
-            <div className="truncate text-[11px] tracking-wider text-ink-tertiary">{c.label}</div>
-            <div
-              className={`mt-1 truncate text-[13.5px] font-medium ${STAT_TONE[c.tone ?? 'neutral']}`}
-            >
-              {c.value}
-            </div>
-            {c.sub ? (
-              <div className="mt-0.5 truncate text-[11px] text-ink-tertiary">{c.sub}</div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </Card>
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      className={className}
+      aria-hidden="true"
+    >
+      {segments.map((seg, idx) => {
+        const line = seg.map(([x, y]) => `${x},${y}`).join(' ')
+        const area = `${seg[0][0]},${H} ${line} ${seg[seg.length - 1][0]},${H}`
+        return (
+          <g key={idx}>
+            <polygon points={area} fill={color} opacity={0.1} />
+            <polyline
+              points={line}
+              fill="none"
+              stroke={color}
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        )
+      })}
+      {last ? <circle cx={last[0]} cy={last[1]} r={2.2} fill={color} /> : null}
+    </svg>
   )
 }
 
-/**
- * 大号水位读数。
- *
- * 参考稿里最醒目的一块:标签 + 一个很大的数字 + 一条水位 + 一行量纲。
- *
- * 和 ui.tsx 的 `Stat` 的区别是**尺寸与站位**:Stat 是成组出现的小方块
- * (一屏四块,谁都不该抢谁),HeroGauge 一行只有三块、是首屏主读数,
- * 所以数字放大到 34px、水位加粗到 6px。
- *
- * 水位颜色走阈值(health.ts),不走上面的分类线色:
- * 这里回答的是「满没满」,不是「这是哪一项」。
- */
-export function HeroGauge({
+/** 资源读数方块:标签 + 当前值 + 24h 走势 + 水位条。 */
+function ResourceTile({
   label,
   icon,
   value,
-  unit = '%',
-  decimals = 0,
+  decimals,
+  unit,
   hint,
-  tone = 'neutral',
-  bar,
-  averaged = false,
+  percent,
+  color,
+  values,
 }: {
   label: string
   icon: ReactNode
   value: number | null
+  decimals: number
   unit?: string
-  decimals?: number
-  hint?: ReactNode
-  tone?: StatTone
-  bar?: number | null
-  /** 多台机器聚合出来的读数。标出来,免得被当成某一台的具体数。 */
-  averaged?: boolean
+  hint: string
+  percent: number | null
+  color: string
+  values: Array<number | null>
 }) {
   const has = value !== null && Number.isFinite(value)
-  const barHas = bar !== null && bar !== undefined && Number.isFinite(bar)
-  const pct = barHas ? Math.max(0, Math.min(100, bar as number)) : 0
+  const level = percent === null ? 'ok' : levelOf(Math.min(100, Math.max(0, percent)))
+  const pct = percent === null ? 0 : Math.min(100, Math.max(0, percent))
+  const tone = percent === null ? STAT_TONE.neutral : STAT_TONE[levelOf(pct)]
 
   return (
-    <Card padded={false} className="flex flex-col p-3.5">
-      <div className="flex items-center gap-1.5">
+    <div className="flex min-w-0 flex-col rounded-md bg-sunken p-3">
+      <div className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0 text-ink-tertiary">{icon}</span>
-        <span className="truncate text-[11.5px] font-medium text-ink-secondary">{label}</span>
-        {averaged ? (
-          <span
-            className="shrink-0 rounded-xs bg-overlay-light px-1 text-[10px] text-ink-tertiary"
-            title="多台机器的平均值"
-          >
-            均
-          </span>
-        ) : null}
+        <span className="truncate text-[11px] font-medium text-ink-secondary">{label}</span>
+        <Sparkline values={values} color={color} className="ms-auto h-6 w-16 shrink-0 opacity-85" />
       </div>
 
-      <div className="mt-2 flex items-baseline gap-1">
+      <div className="mt-1 flex items-baseline gap-1">
         {has ? (
-          <CountUp
-            to={value}
-            decimals={decimals}
-            duration={1.1}
-            className={`tnum text-[34px] leading-none font-semibold tracking-tight ${STAT_TONE[tone]}`}
-          />
+          <span
+            className={cn(
+              'text-[25px] leading-none font-semibold tracking-tight tabular-nums',
+              tone,
+            )}
+          >
+            {value.toFixed(decimals)}
+          </span>
         ) : (
-          <span className="text-[34px] leading-none font-semibold text-ink-tertiary">—</span>
+          <span className="text-[25px] leading-none font-semibold text-ink-tertiary">—</span>
         )}
-        {/* 缺数据时不挂单位:写成「— %」比只写「—」更让人费解 */}
-        {has && unit ? <span className="text-[13px] text-ink-tertiary">{unit}</span> : null}
+        {has && unit ? <span className="text-[12px] text-ink-tertiary">{unit}</span> : null}
       </div>
 
-      {/*
-        mt-auto:三块被 grid 拉成等高之后,把「量纲 + 水位」压到同一条基线上。
-        不对齐的话三块并排看着像三张不同的卡,而不是一组读数。
-        量纲放在条的上方 —— 它说明的是这条条在量什么,脱离条就只是个飘着的数字。
-      */}
-      <div className="mt-auto flex flex-col gap-2 pt-3">
-        {hint ? <span className="truncate text-[11px] text-ink-tertiary">{hint}</span> : null}
-        <span className="block h-[6px] overflow-hidden rounded-full bg-overlay-medium">
+      <div className="mt-auto flex items-center gap-2 pt-2">
+        <span className="block h-1 flex-1 overflow-hidden rounded-full bg-overlay-medium">
           <span
-            className={`block h-full rounded-full transition-[width] duration-500 ease-out ${
-              barHas ? HEALTH[levelOf(pct)].bar : ''
-            }`}
+            className={cn(
+              'block h-full rounded-full transition-[width] duration-500 ease-out',
+              HEALTH[level].bar,
+            )}
             style={{ width: `${pct}%` }}
           />
         </span>
-      </div>
-    </Card>
-  )
-}
-
-export interface StatCell {
-  label: string
-  value: ReactNode
-  unit?: string
-  tone?: StatTone
-  hint?: ReactNode
-}
-
-/**
- * 密集读数网格。
- *
- * 参考稿里那一片「UPTIME 7d 22h / SITES 0 / DATABASES 0 …」的小格子。
- *
- * 服务器健康被提到网格**上方独占一行**:它回答的是「哪几台有事」,
- * 和下面那十二格纯数字不是一类东西,塞进一格会被淹没。
- * 十二格 = 3 行 × 4 列,正好把 4 列网格铺满,不留半行。
- */
-export function StatGrid({ header, cells }: { header?: ReactNode; cells: StatCell[] }) {
-  return (
-    <Card padded={false} className="overflow-hidden">
-      {header ? <div className="border-b border-line px-3.5 py-2.5">{header}</div> : null}
-      <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-3 lg:grid-cols-4">
-        {cells.map((c) => (
-          <div key={c.label} className="min-w-0 bg-primary px-3.5 py-2.5">
-            <div className="truncate text-[11px] text-ink-tertiary">{c.label}</div>
-            <div className="mt-1 flex items-baseline gap-1">
-              <span
-                className={`truncate text-[15px] leading-none font-semibold ${
-                  STAT_TONE[c.tone ?? 'neutral']
-                }`}
-              >
-                {c.value}
-              </span>
-              {c.unit ? <span className="text-[11px] text-ink-tertiary">{c.unit}</span> : null}
-            </div>
-            {c.hint ? (
-              <div className="mt-0.5 truncate text-[11px] text-ink-tertiary">{c.hint}</div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </Card>
-  )
-}
-
-/**
- * 一张紧凑的 24 小时曲线卡。
- *
- * 不复用 charts.tsx 的 `ChartCard`:那个外壳是给「一页一两张大图」设计的
- * (标题 1.4rem,在小卡里会顶满整行),而且它带一条
- * `odd:last-of-type:col-span-full` —— 三张并排时第三张正好命中,
- * 会整行占满、把三列网格撑成两行。这里另起一个 40px 标题行的小外壳。
- */
-export function FleetChart({
-  title,
-  icon,
-  data,
-  seriesKey,
-  label,
-  averaged = false,
-}: {
-  title: string
-  icon: ReactNode
-  data: FleetPoint[]
-  seriesKey: keyof typeof SERIES_COLOR
-  label: string
-  averaged?: boolean
-}) {
-  // 标题行右上角那个读数:取最后一个非空点,而不是 data[last] ——
-  // 末尾常有一两个空桶,直接取会把「—」写在一条明显有数据的曲线旁边
-  const last = [...data].reverse().find((p) => p[seriesKey] !== null)?.[seriesKey] ?? null
-
-  return (
-    <Card padded={false} className="flex flex-col overflow-hidden">
-      <div className="flex items-center gap-1.5 border-b border-line px-3 py-2">
-        <span className="shrink-0 text-ink-tertiary">{icon}</span>
-        <span className="truncate text-[11.5px] font-medium text-ink-secondary">{title}</span>
-        {averaged ? (
-          <span
-            className="shrink-0 rounded-xs bg-overlay-light px-1 text-[10px] text-ink-tertiary"
-            title="多台机器的平均值"
-          >
-            均
-          </span>
-        ) : null}
-        <span className="ms-auto shrink-0 tnum text-[12px] text-ink">
-          {last === null ? '—' : `${last.toFixed(1)}%`}
+        <span className="shrink-0 truncate text-[9.5px] tabular-nums text-ink-tertiary">
+          {hint}
         </span>
       </div>
+    </div>
+  )
+}
 
-      {/* 图表必须有个定高的父容器 —— MetricAreaChart 内部是 h-full */}
-      <div className="h-32 px-1 py-1.5">
-        <MetricAreaChart
-          data={data}
-          time="24h"
-          series={[{ key: seriesKey, label, color: SERIES_COLOR[seriesKey], opacity: 0.22 }]}
-          domain={[0, 100]}
-          tickFormatter={(v) => `${v}%`}
-          valueFormatter={(v) => `${v.toFixed(1)}%`}
-        />
+export interface DashboardHeroProps {
+  host: Server
+  metric?: Metric
+  points: ChartPoint[]
+  containers: HostContainerSummary
+  alertCount: number
+  criticalCount: number
+  capturedAt: string | null
+  onOpenTerminal?: () => void
+}
+
+/**
+ * 首屏状态卡。
+ *
+ * 左边回答「有没有事」并交代这是哪台机器;右边是四项资源的当前水位。
+ * 结论区只有一句加粗的话,不再把五个指标做成五张同重的统计卡。
+ */
+export function DashboardHero({
+  host,
+  metric,
+  points,
+  containers,
+  alertCount,
+  criticalCount,
+  capturedAt,
+  onOpenTerminal,
+}: DashboardHeroProps) {
+  const online = host.status === 'online'
+  const cpu = metric?.cpu_percent ?? null
+  const memPct = ratio(metric?.mem_used_mb, metric?.mem_total_mb)
+  const diskPct = ratio(metric?.disk_used_gb, metric?.disk_total_gb)
+  const load = metric?.load_1 ?? null
+  const cores = host.cpu_cores
+  const loadPct = load !== null && cores ? Math.min(100, (load / cores) * 100) : null
+
+  let tone: Tone = 'ok'
+  let headline = '运行平稳'
+  let detail = capturedAt ? `监控数据更新于 ${capturedAt}` : '正在等待采集器上报数据'
+
+  if (!online) {
+    tone = 'bad'
+    headline = '服务器离线'
+    detail = capturedAt ? `最后一次采集于 ${capturedAt}` : '尚未收到采集数据'
+  } else if (criticalCount > 0) {
+    tone = 'bad'
+    headline = `${criticalCount} 项故障待处理`
+    detail = '请在容器状态中定位并处理异常'
+  } else if (containers.bad > 0) {
+    tone = 'warn'
+    headline = `${containers.bad} 个容器需要关注`
+    detail = '请在容器状态中查看受影响的服务'
+  } else if (alertCount > 0) {
+    tone = 'warn'
+    headline = `${alertCount} 条告警待确认`
+    detail = '请核对告警详情后标记已读'
+  }
+
+  const status = STATUS_TONE[tone]
+
+  const resources = [
+    {
+      label: 'CPU',
+      icon: <IconCpu size={13} />,
+      value: cpu,
+      decimals: 1,
+      unit: '%',
+      hint: cores ? `${cores} 核` : '—',
+      percent: cpu,
+      color: SERIES_COLOR.cpu,
+      values: column(points, 'cpu'),
+    },
+    {
+      label: '内存',
+      icon: <IconMemory size={13} />,
+      value: memPct,
+      decimals: 1,
+      unit: '%',
+      hint: `${memGb(metric?.mem_used_mb)} / ${memGb(metric?.mem_total_mb)} GB`,
+      percent: memPct,
+      color: SERIES_COLOR.mem,
+      values: column(points, 'mem_pct'),
+    },
+    {
+      label: '磁盘',
+      icon: <IconDisk size={13} />,
+      value: diskPct,
+      decimals: 1,
+      unit: '%',
+      hint:
+        metric?.disk_used_gb != null && metric?.disk_total_gb != null
+          ? `${metric.disk_used_gb.toFixed(0)} / ${metric.disk_total_gb.toFixed(0)} GB`
+          : '—',
+      percent: diskPct,
+      color: SERIES_COLOR.disk,
+      values: column(points, 'disk_pct'),
+    },
+    {
+      label: '负载',
+      icon: <IconActivity size={13} />,
+      value: load,
+      decimals: 2,
+      hint: cores ? `${cores} 核 · 1 分钟` : '1 分钟',
+      percent: loadPct,
+      color: LOAD_SERIES[0].color,
+      values: column(points, 'load_1'),
+    },
+  ]
+
+  return (
+    <Card padded={false} className="relative overflow-hidden">
+      {/* 顶部一根 2px 状态线:颜色本身就是结论,比再加一个徽标安静 */}
+      <span className={cn('absolute inset-x-0 top-0 h-[2px]', status.accent)} aria-hidden="true" />
+
+      <div className="grid lg:grid-cols-[minmax(0,1.02fr)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col p-4 sm:p-5">
+          {/* 上半部分只给状态结论留位,下半部分固定为部署节点资料。 */}
+          <div className="flex min-h-0 flex-1 items-center">
+            <div className="flex items-start gap-3">
+              <span
+                className={cn(
+                  'flex size-11 shrink-0 items-center justify-center rounded-full',
+                  status.orb,
+                )}
+                role="img"
+                aria-label={headline}
+              >
+                {status.icon}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[10px] font-medium tracking-[0.14em] text-ink-tertiary uppercase">
+                  OpsDeck 部署节点
+                </div>
+                <h2 className="mt-1 text-[23px] leading-tight font-semibold tracking-tight text-ink">
+                  {headline}
+                </h2>
+                <p className="mt-1 text-[12px] text-ink-secondary">{detail}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* 下半部分是资料行,直接挂在分隔线下,不嵌套第二张卡片。 */}
+          <div className="border-t border-line pt-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+              <StatusDot status={online ? 'online' : host.status === 'offline' ? 'offline' : 'unknown'} />
+              <IconServer size={13} className="shrink-0 text-ink-tertiary" />
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink" title={host.name}>
+                {host.name}
+              </span>
+              <span className="shrink-0 rounded-xs bg-overlay-light px-1.5 py-0.5 text-[10px] text-ink-tertiary">
+                部署节点
+              </span>
+            </div>
+
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10.5px] text-ink-tertiary">
+              <span className="mono">{host.ip ?? host.hostname ?? '—'}</span>
+              {host.os_info ? <span className="truncate">{host.os_info}</span> : null}
+              {host.cpu_cores ? <span>{host.cpu_cores} 核</span> : null}
+              {host.mem_total_mb ? <span>{memGb(host.mem_total_mb)} GB 内存</span> : null}
+              {capturedAt ? (
+                <span className="flex items-center gap-1">
+                  <IconClock size={10} />
+                  采集于 {capturedAt}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          {/* 终端是直接运维入口;图表跳转不放在状态卡里。 */}
+          {onOpenTerminal ? (
+            <div className="flex flex-wrap items-center gap-1.5 pt-2.5">
+              <GhostButton onClick={onOpenTerminal}>
+                <span className="flex items-center gap-1">
+                  <IconTerminal size={11} />
+                  终端
+                </span>
+              </GhostButton>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 border-t border-line p-3 sm:p-4 lg:border-s lg:border-t-0">
+          {resources.map((r) => (
+            <ResourceTile key={r.label} {...r} />
+          ))}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+type TrendKey = 'cpu' | 'mem' | 'disk' | 'load'
+
+const TREND_METRICS: Array<{
+  key: TrendKey
+  label: string
+  pointKey: string
+  color: string
+  decimals: number
+}> = [
+  { key: 'cpu', label: 'CPU', pointKey: 'cpu', color: SERIES_COLOR.cpu, decimals: 1 },
+  { key: 'mem', label: '内存', pointKey: 'mem_pct', color: SERIES_COLOR.mem, decimals: 1 },
+  { key: 'disk', label: '磁盘', pointKey: 'disk_pct', color: SERIES_COLOR.disk, decimals: 1 },
+  { key: 'load', label: '负载', pointKey: 'load_1', color: LOAD_SERIES[0].color, decimals: 2 },
+]
+
+const SERVER_COLORS = [
+  'hsl(220 70% 50%)',
+  'hsl(160 60% 45%)',
+  'hsl(30 80% 55%)',
+  'hsl(280 65% 60%)',
+  'hsl(340 75% 55%)',
+  'hsl(190 75% 42%)',
+] as const
+
+/**
+ * 多机资源趋势。
+ *
+ * 同一指标下每台服务器一条线，颜色与服务器绑定。历史端点按相同桶数返回，
+ * 因此按桶序号合并，避免不同机器在桶内的采样秒数差异把本应重合的曲线错开。
+ */
+
+export function TrendCard({
+  servers,
+  metricsByServer,
+  pointsByServer,
+  range,
+  onRangeChange,
+}: {
+  servers: Server[]
+  metricsByServer: Map<string, Metric>
+  pointsByServer: Map<string, ChartPoint[]>
+  range: ChartTime
+  onRangeChange: (range: ChartTime) => void
+}) {
+  const [activeKey, setActiveKey] = useState<TrendKey>('cpu')
+  const active = TREND_METRICS.find((m) => m.key === activeKey) ?? TREND_METRICS[0]
+  const chartServers = servers.filter((s) => pointsByServer.has(s.id))
+  const maxPoints = Math.max(0, ...chartServers.map((s) => pointsByServer.get(s.id)?.length ?? 0))
+  const chartData: ChartPoint[] = Array.from({ length: maxPoints }, (_, index) => {
+    const row: ChartPoint = { created: 0 }
+    for (const server of chartServers) {
+      const point = pointsByServer.get(server.id)?.[index]
+      if (!point) continue
+      if (!row.created && typeof point.created === 'number') row.created = point.created
+      row[`server-${server.id}`] = point[active.pointKey] ?? null
+    }
+    return row
+  })
+  const series = chartServers.map((server, index) => ({
+    key: `server-${server.id}`,
+    label: server.name,
+    color: SERVER_COLORS[index % SERVER_COLORS.length],
+  }))
+  const onlineCount = servers.filter((s) => s.status === 'online').length
+  const isPercent = active.key !== 'load'
+
+  return (
+    <Card padded={false} className="flex h-full flex-col overflow-hidden">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-line px-3.5 py-2.5">
+        <IconActivity size={14} className="shrink-0 text-ink-tertiary" />
+        <h2 className="text-[12.5px] font-semibold text-ink">资源趋势</h2>
+
+        <div className="ms-auto flex flex-wrap items-center gap-1.5">
+          <div
+            className="flex items-center gap-0.5 rounded-md border border-line bg-sunken p-0.5"
+            role="group"
+            aria-label="切换趋势指标"
+          >
+            {TREND_METRICS.map((m) => {
+              const on = m.key === active.key
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setActiveKey(m.key)}
+                  className={cn(
+                    'h-6 cursor-pointer rounded-sm border px-2.5 text-[11px] transition-colors',
+                    on
+                      ? 'border-line-strong bg-primary font-medium text-ink'
+                      : 'border-transparent text-ink-tertiary hover:text-ink-secondary',
+                  )}
+                >
+                  {m.label}
+                </button>
+              )
+            })}
+          </div>
+          <ChartTimeSelect
+            compact
+            value={range}
+            onChange={onRangeChange}
+            className="w-[7.25rem] shrink-0"
+          />
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1 px-4 pt-3.5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1">
+              <span className="text-[22px] leading-none font-semibold tracking-tight text-ink">
+                {servers.length} 台服务器
+              </span>
+              <span className="text-[11px] text-ink-tertiary">{active.label} 对比</span>
+            </div>
+
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-tertiary">
+              <span>在线 {onlineCount}/{servers.length}</span>
+              <span>每台服务器一条线</span>
+            </div>
+          </div>
+
+          <span className="pb-0.5 text-[9.5px] text-ink-tertiary">
+            {CHART_TIMES[range].label}历史
+          </span>
+        </div>
+
+        {/* 图表父容器必须定高。大图固定 224px,不随容器列一起变高 ——
+            空网格拉满半屏比一张矮图更像"没数据"。 */}
+        <div className="relative h-72 px-1.5 pt-2">
+          <MetricLineChart
+            data={chartData}
+            time={range}
+            series={series}
+            domain={isPercent ? [0, 100] : [0, 'auto']}
+            tickFormatter={(v) => (isPercent ? `${Number(v.toFixed(0))}%` : Number(v.toFixed(2)).toString())}
+            valueFormatter={(v) => (isPercent ? `${v.toFixed(1)}%` : v.toFixed(2))}
+          />
+        </div>
+
+        {/*
+          折线图只回答「谁在什么时候高」。这张表补的是「现在各台是什么数」——
+          服务器名前的色点就是折线图例,不再单独占一行图例。
+        */}
+        <div className="border-t border-line">
+          <div className="grid grid-cols-[minmax(0,1fr)_52px_58px_52px_52px] gap-2 px-3.5 py-1.5 text-[9px] text-ink-tertiary">
+            <span>服务器</span>
+            <span className="text-right">CPU</span>
+            <span className="text-right">内存</span>
+            <span className="text-right">磁盘</span>
+            <span className="text-right">负载</span>
+          </div>
+          <div className="max-h-[6.5rem] overflow-y-auto">
+            {servers.map((s) => {
+              const m = metricsByServer.get(s.id)
+              const cpu = m?.cpu_percent ?? null
+              const mem = ratio(m?.mem_used_mb, m?.mem_total_mb)
+              const disk = ratio(m?.disk_used_gb, m?.disk_total_gb)
+              const load = m?.load_1 ?? null
+              const colorIndex = chartServers.findIndex((cs) => cs.id === s.id)
+              const color = colorIndex >= 0 ? SERVER_COLORS[colorIndex % SERVER_COLORS.length] : null
+              const cellTone = s.status === 'online' ? 'text-ink-secondary' : 'text-ink-tertiary'
+              const cell = (key: TrendKey, value: number | null) => (
+                <span
+                  className={cn(
+                    'text-right text-[10.5px] tabular-nums',
+                    active.key === key ? 'font-medium text-ink' : cellTone,
+                  )}
+                >
+                  {value == null
+                    ? '—'
+                    : key === 'load'
+                      ? value.toFixed(2)
+                      : `${value.toFixed(1)}%`}
+                </span>
+              )
+              return (
+                <div
+                  key={s.id}
+                  className="grid grid-cols-[minmax(0,1fr)_52px_58px_52px_52px] items-center gap-2 px-3.5 py-1 text-[10.5px]"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={cn('size-1.5 shrink-0 rounded-full', !color && 'bg-ink-tertiary')}
+                      style={color ? { background: color } : undefined}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate text-ink-secondary" title={s.name}>
+                      {s.name}
+                    </span>
+                    {s.status !== 'online' ? (
+                      <span className="shrink-0 text-[9px] text-ink-danger">
+                        {s.status === 'offline' ? '离线' : '未知'}
+                      </span>
+                    ) : null}
+                  </span>
+                  {cell('cpu', cpu)}
+                  {cell('mem', mem)}
+                  {cell('disk', disk)}
+                  {cell('load', load)}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-line px-3.5 py-2 text-[10px] text-ink-tertiary">
+        <span className="flex items-center gap-1">
+          <IconClock size={10} />
+          采集器 15 秒上报
+        </span>
+        <span>{CHART_TIMES[range].label} · 每 5 分钟重取历史</span>
       </div>
     </Card>
   )

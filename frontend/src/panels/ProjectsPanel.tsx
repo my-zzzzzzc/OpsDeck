@@ -10,6 +10,7 @@ import {
 } from '../api'
 import { useHeaderMeta } from '../header-meta'
 import { Badge, Card, Empty, SectionTitle } from '../ui'
+import { ProjectWorkspaceDialog } from './ProjectWorkspaceDialog'
 
 /**
  * 项目管理面板：展示项目资产，并对每个项目执行白名单操作。
@@ -29,6 +30,7 @@ export function ProjectsPanel({
   const [logs, setLogs] = useState<ActionLogItem[]>([])
   const [running, setRunning] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const [workspace, setWorkspace] = useState<Project | null>(null)
 
   // viewer 没有 operate 权限,不展示写操作
   const canOperate = user.role === 'admin' || user.role === 'operator'
@@ -107,6 +109,13 @@ export function ProjectsPanel({
                       {p.url}
                     </a>
                   ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setWorkspace(p)}
+                    className="ms-auto h-7 cursor-pointer rounded-md border border-line px-2 text-[10.5px] text-ink-secondary hover:bg-overlay-light hover:text-ink"
+                  >
+                    打开项目
+                  </button>
                 </div>
 
                 <div className="mb-3 grid gap-x-6 gap-y-1 text-xs text-ink-tertiary sm:grid-cols-2">
@@ -121,7 +130,7 @@ export function ProjectsPanel({
                 {canOperate ? (
                   <div className="flex flex-wrap gap-1.5">
                     {catalog
-                      .filter((a) => a.enabled)
+                      .filter((a) => a.enabled && a.key !== 'logs')
                       .map((a) => {
                         const busy = running === `${p.id}:${a.key}`
                         return (
@@ -152,6 +161,15 @@ export function ProjectsPanel({
           </div>
         )}
       </section>
+
+      {workspace ? (
+        <ProjectWorkspaceDialog
+          project={workspace}
+          user={user}
+          catalog={catalog}
+          onClose={() => setWorkspace(null)}
+        />
+      ) : null}
 
       {msg ? (
         <p className={`mb-5 text-[13px] ${msg.ok ? 'text-ink-success' : 'text-ink-danger'}`}>{msg.text}</p>

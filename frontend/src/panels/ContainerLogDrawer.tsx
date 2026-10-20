@@ -1,4 +1,4 @@
-import { ArrowDownToLine, Pause, Play, Trash2, X } from 'lucide-react'
+import { ArrowDownToLine, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { auth, type InstanceDetail } from '../api'
@@ -6,10 +6,9 @@ import { cn } from '../cn'
 import { GhostButton } from '../ui'
 
 /*
- * 容器日志抽屉。
+ * 容器日志面板。
  *
- * 为什么是抽屉而不是整页:看日志的时候,人往往还要对照列表里的其他容器
- * ("是不是只有这个在报错")。整页跳走会丢掉这个上下文。
+ * 日志嵌在容器详情主区中，列表保持在左侧，排查时无需打开抽屉或离开当前页面。
  *
  * 两条数据通道:
  *   打开时   —— REST 拉一段历史(since),把首屏铺满
@@ -50,13 +49,7 @@ function lineTone(line: string): string {
   return 'text-ink-secondary'
 }
 
-export function ContainerLogDrawer({
-  container,
-  onClose,
-}: {
-  container: InstanceDetail
-  onClose: () => void
-}) {
+export function ContainerLogPanel({ container }: { container: InstanceDetail }) {
   const [lines, setLines] = useState<string[]>([])
   const [dropped, setDropped] = useState(0)
   const [range, setRange] = useState<RangeKey>('15m')
@@ -102,7 +95,7 @@ export function ContainerLogDrawer({
 
     ;(async () => {
       try {
-        const res = await fetch(`/api/containers/${container.id}/logs?since=${range}&tail=500`, {
+        const res = await fetch(`/api/containers/${container.id}/logs?since=${range}&tail=200`, {
           headers: { Authorization: `Bearer ${auth.getToken() ?? ''}` },
         })
         if (!res.ok) {
@@ -169,15 +162,6 @@ export function ContainerLogDrawer({
     }
   }, [container.id, range, atBottom, scrollToBottom, following, append])
 
-  // Esc 关闭
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const statusView = {
     connecting: { dot: 'bg-ink-warning', text: '连接中…' },
     live: { dot: 'bg-ink-success', text: '实时' },
@@ -186,32 +170,9 @@ export function ContainerLogDrawer({
   }[status]
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={(e) => {
-      if (e.target === e.currentTarget) onClose()
-    }}>
-      <aside
-        role="dialog"
-        aria-label={`${container.name} 的日志`}
-        className="flex h-full w-full max-w-[720px] flex-col border-s border-line bg-primary shadow-2xl"
-      >
-        {/* 标题 */}
-        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-          <span className="mono truncate text-[13px] font-semibold text-ink">{container.name}</span>
-          <span className="truncate text-[11px] text-ink-tertiary">
-            {container.server_name ?? '—'} · {container.project_name ?? '—'}
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭日志"
-            className="ms-auto cursor-pointer rounded-sm p-1 text-ink-tertiary transition-colors hover:bg-overlay-light hover:text-ink"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
-        {/* 工具行 */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+    <section aria-label={`${container.name} 的日志`} className="flex min-h-0 flex-1 flex-col border-t border-line">
+      {/* 工具行 */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
           <select
             value={range}
             onChange={(e) => setRange(e.target.value as RangeKey)}
@@ -265,17 +226,17 @@ export function ContainerLogDrawer({
             <span className={cn('size-1.5 rounded-full', statusView.dot)} />
             {statusView.text}
           </span>
-        </div>
+      </div>
 
         {/* 日志正文 */}
-        <div
-          ref={bodyRef}
-          className="min-h-0 flex-1 overflow-auto bg-sunken px-4 py-2.5"
+      <div
+        ref={bodyRef}
+        className="min-h-0 flex-1 overflow-auto bg-sunken px-4 py-2.5"
           // 用户手动上滚时暂停跟随,避免和自动滚动打架
           onWheel={(e) => {
             if (e.deltaY < 0 && following) setFollowing(false)
           }}
-        >
+      >
           {message ? (
             <div className="mb-2 rounded-md bg-tint-danger px-3 py-2 text-[12px] text-ink-danger">
               {message}
@@ -300,17 +261,16 @@ export function ContainerLogDrawer({
               ))}
             </pre>
           )}
-        </div>
+      </div>
 
         {/* 底部状态 */}
-        <div className="flex items-center gap-3 border-t border-line px-4 py-2 text-[11px] text-ink-tertiary">
-          <span className="tnum">{lines.length} 行</span>
-          {dropped > 0 ? <span className="text-ink-warning">已省略 {dropped} 行</span> : null}
-          <span className="ms-auto">
-            {container.state === 'running' ? 'docker logs --follow' : '该容器未运行,仅显示历史日志'}
-          </span>
-        </div>
-      </aside>
-    </div>
+      <div className="flex items-center gap-3 border-t border-line px-4 py-2 text-[11px] text-ink-tertiary">
+        <span className="tnum">{lines.length} 行</span>
+        {dropped > 0 ? <span className="text-ink-warning">已省略 {dropped} 行</span> : null}
+        <span className="ms-auto">
+          {container.state === 'running' ? 'docker logs --follow' : '该容器未运行,仅显示历史日志'}
+        </span>
+      </div>
+    </section>
   )
 }
