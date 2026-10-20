@@ -49,6 +49,11 @@ class Server(Base, TimestampMixin):
     ip: Mapped[str | None] = mapped_column(String(64))
     ssh_port: Mapped[int] = mapped_column(Integer, default=22, server_default="22", nullable=False)
 
+    # SSH 登录用户名。默认 root。
+    # 有些云镜像禁用了 root 登录、只给 ubuntu 等用户;此前用户名在代码里
+    # 写死为 root,使这类机器上的终端 / 日志 / 运维操作全部失效。
+    ssh_user: Mapped[str] = mapped_column(String(64), nullable=False, default="root", server_default="root")
+
     # SSH 私钥路径。留空则使用标准密钥(id_rsa / id_ed25519)。
     # 若目标机使用专用密钥(如 ~/.ssh/hermes_server),必须在此显式指定 ——
     # asyncssh 不会读取 ~/.ssh/config,只自动加载标准命名的密钥。

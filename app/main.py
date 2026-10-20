@@ -15,6 +15,7 @@ from app.api import (
     audit,
     auth,
     chat,
+    container_logs,
     dify_tools,
     health,
     observability,
@@ -36,6 +37,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logging.getLogger(__name__).warning(
             "SECRET_KEY 仍为默认值,请在生产环境通过环境变量设置随机密钥,否则 JWT 可被伪造。"
         )
+
+    if not settings.scheduler_enabled:
+        logging.getLogger(__name__).warning("后台调度器已关闭(SCHEDULER_ENABLED=false):告警检测与数据清理不会运行。")
+        yield
+        return
 
     async with background_lifespan():
         yield
@@ -84,6 +90,10 @@ def create_app() -> FastAPI:
     # Web 终端(仅管理员,需逐台授权)
     app.include_router(terminal.router, prefix="/api")
     app.add_api_websocket_route("/ws/terminal/{server_id}", terminal.terminal_websocket)
+
+    # 容器日志(仅管理员):一次性回放 + 实时流
+    app.include_router(container_logs.router, prefix="/api")
+    app.add_api_websocket_route("/ws/containers/{instance_id}/logs", container_logs.container_logs_websocket)
 
     _mount_frontend(app)
     return app

@@ -4,23 +4,29 @@ import {
   api,
   type ActionCatalogItem,
   type EventItem,
-  type Instance,
+  type InstanceDetail,
   type Metric,
-  type Project,
   type Server,
   type User,
 } from './api'
 import {
-  AlertBar,
-  ContainerGrid,
-  TrendRow,
-  eventsToAlerts,
-  pctSeries,
-  seriesDelta,
-} from './dashboard-parts'
+  ChartCard,
+  ChartLegend,
+  ChartTimeSelect,
+  CHART_TIMES,
+  MetricAreaChart,
+  MetricLineChart,
+  SERIES_COLOR,
+  type ChartPoint,
+  type ChartTime,
+} from './charts'
+import { ContainerBoard } from './ContainerBoard'
+import { AlertBanner } from './AlertBanner'
+import { Badge, Card, GhostButton, IconButton, PageHeader, StatusDot } from './ui'
 import { AuditPanel } from './panels/AuditPanel'
 import { ChatPanel } from './panels/ChatPanel'
 import { DifyPanel } from './panels/DifyPanel'
+import { ContainersPanel } from './panels/ContainersPanel'
 import { ProjectsPanel } from './panels/ProjectsPanel'
 import { ServersPanel } from './panels/ServersPanel'
 import { UsersPanel } from './panels/UsersPanel'
@@ -37,17 +43,15 @@ import {
   IconSunMoon,
 } from './icons'
 import { FadeIn, PageSkeleton } from './motion'
-import { ratio } from './health'
 import { HeaderMetaProvider } from './header-meta'
 import { NAV_GROUPS, NAV_ITEMS, TAB_META, type Tab } from './nav'
 import { BlankPanel } from './panels/BlankPanel'
-import { ServerCard } from './ServerCard'
 import { ServerDetail } from './panels/ServerDetail'
 import { RemoteTerminalDialog } from './panels/RemoteTerminalDialog'
 import { NotificationBell } from './NotificationBell'
 import { Sidebar, SidebarDrawer } from './Sidebar'
 import { THEME_ORDER, useTheme } from './theme'
-import { GhostButton, IconButton, PageHeader, Card, StatusDot } from './ui'
+import { ratio } from './health'
 
 /*
  * 页签的定义搬到了 `nav.tsx`。
@@ -57,9 +61,21 @@ import { GhostButton, IconButton, PageHeader, Card, StatusDot } from './ui'
  * 「侧边栏有、搜不到」。现在导航注册表是唯一来源,这里只消费。
  */
 
+/**
+ * 负载的三条线。
+ *
+ * 与 ServerDetail.tsx 里那份保持同色:同一个指标在首页和详情页换了颜色,
+ * 读者就得重新学一遍"这个紫是不是那个紫"。
+ * Beszel 在 load-average-chart.tsx 里直接写死了这三个色值。
+ */
+const LOAD_SERIES = [
+  { key: 'load_1', label: '1 分钟', color: 'hsl(271, 81%, 60%)' },
+  { key: 'load_5', label: '5 分钟', color: 'hsl(217, 91%, 60%)' },
+  { key: 'load_15', label: '15 分钟', color: 'hsl(25, 95%, 53%)' },
+] as const
+
 /** 看板向应用层汇报的元信息,用于渲染页头的"实时 / 待处理 / 更新于 / 刷新"。 */
-interface DashboardMeta {
-  lastUpdated: Date | null
+interface DashboardMeta {  lastUpdated: Date | null
   busy: boolean
   refresh: () => void
   /**
@@ -71,7 +87,19 @@ interface DashboardMeta {
   stale: boolean
 }
 
-/** 首页看板:资产总览、资源水位、容器实例与事件。 */
+/**
+ * 首页看板。
+ *
+ * 两块内容,按屏分:
+ *   上半屏 —— **只盯部署 OpsDeck 的那台机器**(默认 42.193.241.34):
+ *             身份条 + 资源趋势 + 负载折线。
+ *   下半屏 —— 全部服务器上的所有容器汇总。
+ *
+ * 为什么上半屏只画一台:
+ * 这一页要回答的是"我自己的服务跑得怎么样"。机队均值会把一台快撑爆的
+ * 磁盘平均成 40% —— 那正是最不该被平均掉的信息。其它机器在「服务器」
+ * 页有各自的卡片,不该挤进首页。
+ */
 function Dashboard({
   onMeta,
   alerts,
@@ -80,21 +108,41 @@ function Dashboard({
   alerts: ReturnType<typeof useAlerts>
 }) {
   const { servers, unacked: unackedEvents } = alerts
-  const [instances, setInstances] = useState<Instance[]>([])
-  const [metrics, setMetrics] = useState<Metric[]>([])
-  /**
-   * 项目列表。只用来把容器归属回服务器 ——
-   * Instance 上只有 project_id,没有 server_id,必须借 projects 中转。
+
+  /*
+   * 部署机的判定:先找 IP 命中 42.193.241.34 的,再退化到名字里带这个 IP 的。
+   *
+   * 不硬编码服务器 ID:资产表里的 ID 是 UUID,换库就变;
+   * 而"哪台机器部署了本系统"这件事,写死在配置里比写死在代码里更合适。
+   * 两个都匹配不到时,退化成"按 online 优先排序的第一台",并且界面上
+   * 会明确写出当前选中的是哪一台 —— 绝不假装它就是部署机。
    */
-  const [projects, setProjects] = useState<Project[]>([])
-  /** 各服务器近 24 小时的指标。既供首页的机队曲线,也用来算数据覆盖率。 */
-  const [histories, setHistories] = useState<Map<string, Metric[]>>(new Map())
+  const DEPLOY_IP = '42.193.241.34'
+  const host = useMemo(() => {
+    const byIp = servers.find((s) => (s.ip ?? '').includes(DEPLOY_IP))
+    if (byIp) return byIp
+    const byName = servers.find((s) => s.name.includes(DEPLOY_IP))
+    if (byName) return byName
+    return (
+      [...servers].sort((a, b) => {
+        if (a.status === b.status) return a.name.localeCompare(b.name)
+        return a.status === 'online' ? -1 : 1
+      })[0] ?? null
+    )
+  }, [servers])
+
+  const [metrics, setMetrics] = useState<Metric[]>([])
+  const [containers, setContainers] = useState<InstanceDetail[]>([])
+  const [containersError, setContainersError] = useState<string | null>(null)
+  /** 部署机近 24 小时的指标,供趋势图使用。 */
+  const [history, setHistory] = useState<Metric[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
   const [terminalServer, setTerminalServer] = useState<Server | null>(null)
+  const [range, setRange] = useState<ChartTime>('24h')
 
   /**
    * 拉取看板所需的全部数据。
@@ -108,14 +156,24 @@ function Dashboard({
   const load = useCallback(async (showBusy = false) => {
     if (showBusy) setBusy(true)
     try {
-      const [i, m, p] = await Promise.all([api.instances(), api.latestMetrics(), api.projects()])
-      setInstances(i)
-      setMetrics(m)
-      setProjects(p)
-      setError(null)
-      setLastUpdated(new Date())
-    } catch (err) {
-      setError((err as Error).message)
+      // 容器与指标各自失败不应拖垮另一半:容器看板是这次新加的,
+      // 它挂了不该让整页变成错误页。
+      const [m, c] = await Promise.allSettled([api.latestMetrics(), api.instancesDetail()])
+
+      if (m.status === 'fulfilled') {
+        setMetrics(m.value)
+        setError(null)
+        setLastUpdated(new Date())
+      } else {
+        setError((m.reason as Error).message)
+      }
+
+      if (c.status === 'fulfilled') {
+        setContainers(c.value)
+        setContainersError(null)
+      } else {
+        setContainersError((c.reason as Error).message)
+      }
     } finally {
       if (showBusy) setBusy(false)
       setLoading(false)
@@ -123,33 +181,20 @@ function Dashboard({
   }, [])
 
   /**
-   * 拉取指标历史。
+   * 拉取部署机的指标历史。
    *
-   * 单独一条链路、单独一个节奏:趋势条 5 分钟更新一次就够了,
+   * 单独一条链路、单独一个节奏:趋势图 5 分钟更新一次就够了,
    * 跟 15 秒的轮询绑在一起是白拉几十倍的字节。
-   *
-   * 后端没有批量历史接口,只能按服务器逐个取。机器规模上去之后
-   * 这里要么加一个批量端点,要么把请求扇出限制住 —— 现在是 1 台,先不预先复杂化。
    */
   const loadHistory = useCallback(async () => {
+    if (!host) return
     try {
-      const list = await api.servers()
-      const pairs = await Promise.all(
-        list.map(async (s) => {
-          try {
-            // 24 小时 → 24 个点,一小时一格
-            return [s.id, await api.metricHistory(s.id, 24, 24)] as const
-          } catch {
-            // 历史拉不到不影响首屏结论,退化成"无历史"而不是整页报错
-            return [s.id, [] as Metric[]] as const
-          }
-        }),
-      )
-      setHistories(new Map(pairs))
+      const points: Record<ChartTime, number> = { '1h': 60, '12h': 72, '24h': 96, '7d': 84, '30d': 90 }
+      setHistory(await api.metricHistory(host.id, CHART_TIMES[range].hours, points[range]))
     } catch {
-      /* 服务器列表都拿不到时静默:主链路已经会把错误显示出来 */
+      // 历史拉不到不影响首屏结论,退化成"无历史"而不是整页报错
     }
-  }, [])
+  }, [host, range])
 
   useEffect(() => {
     void load(true)
@@ -168,11 +213,14 @@ function Dashboard({
     onMeta({
       lastUpdated,
       busy,
-      refresh: () => void load(true),
+      refresh: () => {
+        void load(true)
+        void loadHistory()
+      },
       // 拉取失败时页头不能继续说「实时」—— 那正是最需要它闭嘴的时候
       stale: error !== null,
     })
-  }, [onMeta, lastUpdated, busy, load, error])
+  }, [onMeta, lastUpdated, busy, load, loadHistory, error])
 
   if (loading) return <PageSkeleton />
 
@@ -194,43 +242,6 @@ function Dashboard({
     )
   }
 
-  /*
-   * 仪表板只展示「本机」。
-   *
-   * 这是一处**本部署的自定义改动**(上游 OpsDeck 会列出全部服务器):
-   * 这台 OpsDeck 同时纳管生产机,两台的卡片并排会把版面撑成机队视角,
-   * 而日常最常看的是 OpsDeck 自己所在机器的水位。
-   *
-   * 过滤只发生在前端展示层:
-   *   - 被过滤掉的服务器**仍在采集**、数据仍在库里、告警照常产生;
-   *   - 「服务器」页仍能看到全部机器并逐台下钻。
-   * 也就是说这只是"首页看哪台",不是"监控哪台"。
-   *
-   * 判定顺序:先按 id 精确匹配(最稳),再回退到"名称含本机标记"与
-   * "IP 等于 OpsDeck 自身地址"。都匹配不到时**回退为展示全部** ——
-   * 宁可多显示一台,也不要因为改名就把首页变成一片空白。
-   */
-  const SELF_SERVER_ID = '4e675d8d-9814-4d4b-9911-024465850182'
-  const SELF_IP = '42.193.241.34'
-
-  const selfServers = servers.filter(
-    (s) => s.id === SELF_SERVER_ID || s.name.includes('本机') || s.ip === SELF_IP,
-  )
-  const shown = selfServers.length > 0 ? selfServers : servers
-
-  /*
-   * 顶部汇总与卡片网格都基于 `shown`,否则会出现
-   * 「顶部说 2 台、下面只有 1 张卡」这种自相矛盾的版面。
-   */
-  const online = shown.filter((s) => s.status === 'online').length
-  const offline = shown.length - online
-
-  /*
-   * 身份带。单机视角下回答的是「这台机器有多大、数据有多新」,
-   * 而不是机队规模 —— 所以不再出现「N 台合计」这类合并数字。
-   */
-  const selfServer = shown.length === 1 ? shown[0] : null
-
   if (detailServer) {
     return (
       <ServerDetail
@@ -241,48 +252,46 @@ function Dashboard({
     )
   }
 
-  const metricMap = new Map(metrics.map((m) => [m.server_id, m]))
+  const metric = host ? new Map(metrics.map((m) => [m.server_id, m])).get(host.id) : undefined
+  const online = host?.status === 'online'
 
-  /*
-   * 告警条的数据源。
-   *
-   * 两类合并:
-   *   1. 后端产生的事件(离线 / 阈值 / 容器退出)
-   *   2. 前端即时可见的「容器不健康」—— 采集器把 health=unhealthy 上报了,
-   *      但后端目前不为它生成事件(见 detection.py 只处理 exited)。
-   *      warp 这种"跑着但隧道不通"的容器,不在这里补一条就完全不可见。
-   */
-  const alertRows = eventsToAlerts(
-    unackedEvents,
-    (id) => servers.find((s) => s.id === id)?.name,
-  )
+  const memPct = ratio(metric?.mem_used_mb, metric?.mem_total_mb)
+  const diskPct = ratio(metric?.disk_used_gb, metric?.disk_total_gb)
+  const memGb = (v?: number | null) => (v != null ? (v / 1024).toFixed(1) : '—')
+  const hostEvents = unackedEvents.filter((e) => e.server_id === host?.id)
 
-  const unhealthy = instances.filter(
-    (i) => i.state !== 'running' || i.health === 'unhealthy' || i.health === 'starting',
-  )
-  const derivedRows = unhealthy.map((i) => {
-    const proj = projects.find((p) => p.id === i.project_id)
-    const srv = proj ? servers.find((s) => s.id === proj.server_id) : undefined
-    const stopped = i.state !== 'running'
-    return {
-      key: `inst-${i.id}`,
-      level: (stopped || i.health === 'unhealthy' ? 'critical' : 'warning') as 'critical' | 'warning',
-      title: stopped
-        ? `容器未运行: ${i.name}`
-        : i.health === 'unhealthy'
-          ? `容器不健康: ${i.name}`
-          : `容器启动中: ${i.name}`,
-      detail: stopped
-        ? `状态 ${i.state}。检查容器日志确认退出原因。`
-        : '健康检查持续失败,服务可能不可用。',
-      source: srv?.name,
-    }
-  })
+  // 部署机自己的容器读数。bad = 非 running 或 health 为 unhealthy
+  const hostContainers = (() => {
+    const mine = containers.filter((c) => c.server_id === host?.id)
+    const running = mine.filter((c) => c.state === 'running').length
+    const bad = mine.filter((c) => c.state !== 'running' || c.health === 'unhealthy').length
+    return { total: mine.length, running, bad }
+  })()
 
-  const allAlerts = [...derivedRows, ...alertRows]
+  // 趋势图的数据点。null 必须原样透传 —— 画成 0 会把"没采集到"读成"完全空闲"
+  const points: ChartPoint[] = history.map((m) => ({
+    created: new Date(m.captured_at).getTime(),
+    cpu: m.cpu_percent,
+    mem: m.mem_used_mb != null ? m.mem_used_mb / 1024 : null,
+    swap: m.swap_used_mb != null ? m.swap_used_mb / 1024 : null,
+    disk: m.disk_used_gb,
+    load_1: m.load_1,
+    load_5: m.load_5,
+    load_15: m.load_15,
+  }))
+
+  const memTotalGb = metric?.mem_total_mb != null ? metric.mem_total_mb / 1024 : null
+  const diskTotalGb = metric?.disk_total_gb ?? null
+  const capturedAt = metric?.captured_at
+    ? new Date(metric.captured_at).toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : null
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-3.5">
       {/*
         刷新失败但仍留着上一版数据时的说明条。
         必须显式写出来:数字看起来和平时一模一样,不说清楚就会被当成实时值读。
@@ -296,156 +305,195 @@ function Dashboard({
         </div>
       ) : null}
 
-      {/*
-        首屏第一块就是告警条 —— 它回答「现在要不要我动手」。
-        原来的静态规格带(几核/几 GB)下移到服务器卡片标题行:
-        那些值装完就不变,占着首屏最贵的位置却没有信息量。
-      */}
-      <AlertBar alerts={allAlerts} hasData={shown.length > 0 && online > 0} />
-
-      {/* 容器:带所属服务器,异常排前 */}
-      <ContainerGrid
-        instances={instances}
-        projects={projects}
-        servers={servers}
-        onSelectServer={setDetailServer}
-      />
-
-      {/* 单服务器独立卡片网格 */}
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-ink">
-              {shown.length === 1 && selfServer ? selfServer.name : '服务器节点状态'}
-            </span>
-            <span className="rounded-xs bg-overlay-light px-1.5 py-0.5 text-[11px] text-ink-tertiary">
-              {online} 在线 · {offline} 离线 · 共 {shown.length} 台
-            </span>
-          </div>
-          <span className="text-[11.5px] text-ink-tertiary">
-            点击卡片或服务器名可下钻单机深度图表
-          </span>
-        </div>
-
-        {shown.length === 0 ? (
-          <div className="rounded-lg border border-line bg-primary p-8 text-center text-[13px] text-ink-tertiary">
-            还没有接入服务器。
-          </div>
-        ) : (
-          <div className={`grid gap-4 ${shown.length > 1 ? 'sm:grid-cols-2 xl:grid-cols-2' : ''}`}>
-            {shown.map((s) => (
-              <ServerCard
-                key={s.id}
-                server={s}
-                metric={metricMap.get(s.id)}
-                history={histories.get(s.id) ?? []}
-                unackedEvents={unackedEvents}
-                onSelectServer={setDetailServer}
-                onOpenTerminal={setTerminalServer}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/*
-        资源水位 + 24h 趋势。
-
-        卡片上的水位条只说「此刻多少」,这一块补上「在涨还是在跌」——
-        Swap 42% 如果是涨上来的,那才是要处理的事;一直 42% 则只是现状。
-        迷你曲线是纯形状,不画坐标轴:它的作用是让眼睛看出方向,
-        精确读数由上方的百分比和 Δ 承担。
-      */}
-      {shown.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-ink">资源水位</span>
-            <span className="rounded-xs bg-overlay-light px-1.5 py-0.5 text-[11px] text-ink-tertiary">
-              近 24 小时 · 对比首尾
-            </span>
-            <span className="ml-auto text-[11.5px] text-ink-tertiary">
-              阈值 70% 警告 · 85% 严重
-            </span>
-          </div>
-
-          {shown.map((s) => {
-            const hist = histories.get(s.id) ?? []
-            const m = metricMap.get(s.id)
-            const cpuSeq = pctSeries(hist, 'cpu')
-            const memSeq = pctSeries(hist, 'mem')
-            const diskSeq = pctSeries(hist, 'disk')
-            const swapSeq = pctSeries(hist, 'swap')
-
-            const memPct = ratio(m?.mem_used_mb, m?.mem_total_mb)
-            const diskPct = ratio(m?.disk_used_gb, m?.disk_total_gb)
-            const swapPct = ratio(m?.swap_used_mb, m?.swap_total_mb)
-
-            return (
-              <Card key={s.id} padded={false} className="px-3.5 py-2.5">
-                <div className="mb-1 flex items-center gap-2">
-                  <StatusDot status={s.status === 'online' ? 'online' : s.status === 'offline' ? 'offline' : 'unknown'} />
-                  <span className="truncate text-[12.5px] font-medium text-ink">{s.name}</span>
-                  <span className="mono truncate text-[11px] text-ink-tertiary">
-                    {s.ip ?? s.hostname ?? '—'}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[11px] text-ink-tertiary">
-                    {s.cpu_cores ? `${s.cpu_cores} 核` : ''}
-                    {s.mem_total_mb ? ` · ${(s.mem_total_mb / 1024).toFixed(1)} GB` : ''}
-                    {s.os_info ? ` · ${s.os_info}` : ''}
-                  </span>
-                </div>
-
-                <div className="divide-y divide-line/60">
-                  <TrendRow
-                    label="CPU"
-                    icon={<IconGauge size={12} />}
-                    pct={m?.cpu_percent ?? null}
-                    detail={m?.load_1 != null ? `负载 ${m.load_1.toFixed(2)}` : undefined}
-                    delta={seriesDelta(cpuSeq)}
-                    spark={cpuSeq}
-                  />
-                  <TrendRow
-                    label="内存"
-                    icon={<IconActivity size={12} />}
-                    pct={memPct}
-                    detail={
-                      m?.mem_used_mb != null && m?.mem_total_mb != null
-                        ? `${(m.mem_used_mb / 1024).toFixed(1)} / ${(m.mem_total_mb / 1024).toFixed(1)} GB`
-                        : undefined
-                    }
-                    delta={seriesDelta(memSeq)}
-                    spark={memSeq}
-                  />
-                  <TrendRow
-                    label="磁盘"
-                    icon={<IconActivity size={12} />}
-                    pct={diskPct}
-                    detail={
-                      m?.disk_used_gb != null && m?.disk_total_gb != null
-                        ? `${m.disk_used_gb.toFixed(0)} / ${m.disk_total_gb.toFixed(0)} GB`
-                        : undefined
-                    }
-                    delta={seriesDelta(diskSeq)}
-                    spark={diskSeq}
-                  />
-                  <TrendRow
-                    label="Swap"
-                    icon={<IconRefresh size={12} />}
-                    pct={swapPct}
-                    detail={
-                      m?.swap_used_mb != null && m?.swap_total_mb != null && m.swap_total_mb > 0
-                        ? `${(m.swap_used_mb / 1024).toFixed(1)} / ${(m.swap_total_mb / 1024).toFixed(1)} GB`
-                        : '未启用'
-                    }
-                    delta={seriesDelta(swapSeq)}
-                    spark={swapSeq}
-                  />
-                </div>
-              </Card>
-            )
-          })}
-        </section>
+      {/* 未读告警条:放在最顶上,处理告警不需要离开首页 */}
+      {unackedEvents.length > 0 ? (
+        <AlertBanner
+          events={unackedEvents}
+          servers={servers}
+          onAck={(id) => void alerts.ack(id)}
+          onAckAll={async () => {
+            await api.ackAllEvents()
+            alerts.reload()
+          }}
+        />
       ) : null}
+
+      {/* ============================ 部署机专区 ============================ */}
+      {host ? (
+        <>
+          {/* 身份条 */}
+          <Card padded={false} className="overflow-hidden">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <StatusDot status={online ? 'online' : host.status === 'offline' ? 'offline' : 'unknown'} />
+                <button
+                  type="button"
+                  onClick={() => setDetailServer(host)}
+                  className="cursor-pointer truncate text-[15px] font-semibold text-ink transition-colors hover:text-accent hover:underline"
+                  title={host.name}
+                >
+                  {host.name}
+                </button>
+                <span className="rounded-xs bg-overlay-light px-1.5 py-0.5 text-[10.5px] text-ink-tertiary">
+                  本系统部署机
+                </span>
+                {hostEvents.length > 0 ? (
+                  <Badge tone={hostEvents.some((e) => e.level === 'critical') ? 'bad' : 'warn'}>
+                    {hostEvents.length} 告警
+                  </Badge>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-tertiary">
+                <span className="mono">{host.ip ?? host.hostname ?? '—'}</span>
+                {host.os_info ? <span className="truncate">{host.os_info}</span> : null}
+                {host.cpu_cores ? <span>{host.cpu_cores} 核</span> : null}
+                {host.mem_total_mb ? <span>{memGb(host.mem_total_mb)} GB 内存</span> : null}
+                {hostContainers.total > 0 ? (
+                  <span className={hostContainers.bad > 0 ? 'text-ink-warning' : undefined}>
+                    容器 {hostContainers.running}/{hostContainers.total} 运行
+                    {hostContainers.bad > 0 ? ` · ${hostContainers.bad} 待关注` : ''}
+                  </span>
+                ) : null}
+                {capturedAt ? <span>采集于 {capturedAt}</span> : null}
+              </div>
+
+              <div className="ms-auto flex items-center gap-2">
+                <ChartTimeSelect value={range} onChange={setRange} className="w-32" />
+                <GhostButton onClick={() => setDetailServer(host)}>
+                  <span className="flex items-center gap-1">全部图表</span>
+                </GhostButton>
+                {host.terminal_enabled ? (
+                  <GhostButton onClick={() => setTerminalServer(host)}>
+                    <span className="flex items-center gap-1">终端</span>
+                  </GhostButton>
+                ) : null}
+              </div>
+            </div>
+          </Card>
+
+          {/*
+            工作区按任务分栏:左侧用 2×2 网格对比四项资源走势,右侧只保留
+            容器工作区。资源读数不在右栏重复出现,避免同一结论被看两遍。
+            窄屏回落为上下结构,不压缩任何一个工作面。
+          */}
+          <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(25rem,1fr)]">
+            <div className="grid min-w-0 gap-3 md:grid-cols-2">
+              {/*
+                四项指标的公共描述:取值、单位、颜色、当前值文案。
+                写成数据而不是四段重复 JSX —— 之前四张卡片的标题、
+                当前值、tickFormatter、valueFormatter 各写一遍,
+                改一次单位要动四处,迟早漏掉一处。
+              */}
+              {[
+              {
+                key: 'cpu',
+                title: 'CPU 使用率',
+                color: SERIES_COLOR.cpu,
+                values: points.map((p) => (typeof p.cpu === 'number' ? p.cpu : null)),
+                pct: true,
+                current: metric?.cpu_percent != null ? `${metric.cpu_percent.toFixed(1)}%` : '—',
+                currentLabel: '当前',
+                max: 100,
+                unit: '%',
+              },
+              {
+                key: 'mem',
+                title: '内存使用',
+                color: SERIES_COLOR.mem,
+                values: points.map((p) => (typeof p.mem === 'number' ? p.mem : null)),
+                pct: false,
+                current:
+                  metric?.mem_used_mb != null && metric?.mem_total_mb != null
+                    ? `${memGb(metric.mem_used_mb)} / ${memGb(metric.mem_total_mb)} GB`
+                    : '—',
+                currentLabel: memPct != null ? `${memPct.toFixed(1)}%` : '当前',
+                max: memTotalGb,
+                unit: ' GB',
+              },
+              {
+                key: 'disk',
+                title: '磁盘使用',
+                color: SERIES_COLOR.disk,
+                values: points.map((p) => (typeof p.disk === 'number' ? p.disk : null)),
+                pct: false,
+                current:
+                  metric?.disk_used_gb != null && metric?.disk_total_gb != null
+                    ? `${metric.disk_used_gb.toFixed(0)} / ${metric.disk_total_gb.toFixed(0)} GB`
+                    : '—',
+                currentLabel: diskPct != null ? `${diskPct.toFixed(1)}%` : '当前',
+                max: diskTotalGb,
+                unit: ' GB',
+              },
+              ].map((s) => (
+                <ChartCard
+                  key={s.key}
+                  compact
+                  title={s.title}
+                  action={
+                    <span className="flex flex-col items-end gap-0.5 tabular-nums">
+                      <span className="text-[14px] font-semibold leading-none text-ink">{s.current}</span>
+                      <span className="text-[10px] leading-none text-ink-tertiary">{s.currentLabel}</span>
+                    </span>
+                  }
+                >
+                  <MetricAreaChart
+                    data={s.values.map((v, i) => ({ created: points[i]?.created ?? 0, v }))}
+                    time={range}
+                    domain={[0, s.pct ? 100 : (s.max ?? 'auto')]}
+                    series={[{ key: 'v', label: s.title, color: s.color, opacity: 0.35 }]}
+                    tickFormatter={(v) =>
+                      s.pct ? `${Number(v.toFixed(0))}%` : `${v.toFixed(s.key === 'disk' ? 0 : 1)}${s.unit}`
+                    }
+                    valueFormatter={(v) =>
+                      s.pct ? `${Number(v.toFixed(2))}%` : `${v.toFixed(1)}${s.unit}`
+                    }
+                  />
+                </ChartCard>
+              ))}
+
+              <ChartCard
+                compact
+                title="系统负载"
+                action={
+                  <span className="flex flex-col items-end gap-0.5 tabular-nums">
+                    <span className="text-[14px] font-semibold leading-none text-ink">
+                      {metric?.load_1 != null ? metric.load_1.toFixed(2) : '—'}
+                    </span>
+                    <span className="text-[10px] leading-none text-ink-tertiary">1 分钟</span>
+                  </span>
+                }
+                legend={
+                  <ChartLegend
+                    items={[
+                      { label: '1 分钟', color: LOAD_SERIES[0].color },
+                      { label: '5 分钟', color: LOAD_SERIES[1].color },
+                      { label: '15 分钟', color: LOAD_SERIES[2].color },
+                    ]}
+                  />
+                }
+              >
+                <MetricLineChart
+                  data={points}
+                  time={range}
+                  series={LOAD_SERIES.map((s) => ({ key: s.key, label: s.label, color: s.color }))}
+                  tickFormatter={(v) => `${Number(v.toFixed(2))}`}
+                  valueFormatter={(v) => v.toFixed(2)}
+                />
+              </ChartCard>
+            </div>
+
+            <aside className="min-w-0">
+              <ContainerBoard containers={containers} error={containersError} />
+            </aside>
+          </div>
+        </>
+      ) : (
+        <Card className="py-10 text-center">
+          <p className="text-[13px] text-ink-secondary">还没有接入任何服务器</p>
+          <p className="mt-1 text-[11.5px] text-ink-tertiary">到「服务器」页登记一台,并把采集器指向本系统。</p>
+        </Card>
+      )}
 
       {/* 终端弹窗 */}
       {terminalServer ? (
@@ -708,6 +756,7 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
             <HeaderMetaProvider value={setPanelMeta}>
               <FadeIn key={tab}>
                 {tab === 'dashboard' ? <Dashboard onMeta={handleMeta} alerts={alerts} /> : null}
+                {tab === 'containers' ? <ContainersPanel user={user} /> : null}
                 {tab === 'servers' ? <ServersPanel user={user} /> : null}
                 {tab === 'deployments' ? <ProjectsPanel user={user} catalog={catalog} /> : null}
                 {tab === 'chat' ? <ChatPanel /> : null}

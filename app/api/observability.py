@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.auth import require
@@ -15,6 +15,7 @@ from app.models import Event, Instance, Metric, Project, Server, User
 from app.schemas.observability import (
     EventRead,
     IngestResult,
+    InstanceDetailRead,
     InstanceRead,
     MetricRead,
     ReportPayload,
@@ -95,18 +96,39 @@ def ingest_report(
         existing.image = item.image or existing.image
         existing.state = item.state or existing.state
         existing.health = item.health or existing.health
-        existing.mem_used_mb = item.mem_used_mb or existing.mem_used_mb
-        existing.mem_limit_mb = item.mem_limit_mb or existing.mem_limit_mb
+        # 内存直接覆盖,不能用 `or` 兜底:采集器对"未设上限"和"没采集到"都给 0,
+        # 用 `or` 会把 0 当成缺失,于是容器停掉之后还一直挂着上一次运行时的占用。
+        existing.mem_used_mb = item.mem_used_mb or None
+        existing.mem_limit_mb = item.mem_limit_mb or None
         synced += 1
 
     # 4. 记录离线容器为事件(仅 exited,且避免重复刷屏)
-    exited = [i for i in payload.instances if i.state == "exited" and i.project in projects]
+    #
+    # 一次性任务容器(init_permissions / migrate / 建表脚本这类)跑完退出
+    # 是它的正常生命周期,不是故障 —— 给它们发告警只会训练用户忽略告警。
+    #
+    # 判断依据只能是名字:采集器目前不给 exit_code 赋值(永远是 Go 的零值 0),
+    # 所以"退出码为 0 就算正常"这种写法会把**所有**退出一律过滤掉,包括真故障。
+    # 名字启发式会漏掉个别非常规命名,但它的错误方向是"少报一次正常退出",
+    # 而不是"漏掉一次真实宕机"。
+    def _is_one_shot(name: str) -> bool:
+        lowered = name.lower()
+        return any(marker in lowered for marker in ("init", "migrat", "setup", "provision"))
+
+    exited = [
+        i for i in payload.instances if i.state == "exited" and i.project in projects and not _is_one_shot(i.name)
+    ]
     for item in exited:
         project = projects[item.project]
+        title = f"容器已退出: {item.name}"
+        # 去重必须精确到**这一个容器**:只按 project_id 判重的话,
+        # 同一项目下只要有一条 exit 事件,其余容器都会被当成"已告警"而漏报,
+        # 反过来又会在 30 分钟窗口过后为每个容器各补一条 —— 两个方向都是错的。
         recent = db.scalar(
             select(Event).where(
                 Event.project_id == project.id,
                 Event.kind == "exit",
+                Event.title == title,
                 Event.created_at > now - timedelta(minutes=30),
             )
         )
@@ -117,7 +139,7 @@ def ingest_report(
                     project_id=project.id,
                     level="warning",
                     kind="exit",
-                    title=f"容器已退出: {item.name}",
+                    title=title,
                     detail=f"项目 {project.name} 的容器 {item.name} 处于 exited 状态。",
                 )
             )
@@ -316,6 +338,56 @@ def list_instances(
     return list(db.scalars(stmt))
 
 
+@router.get("/instances/detail", response_model=list[InstanceDetailRead], summary="实例列表(含项目与服务器)")
+def list_instances_detail(
+    db: Session = Depends(get_db),
+    _: User = Depends(require("view")),
+    server_id: uuid.UUID | None = Query(default=None),
+    state: str | None = Query(default=None, description="按状态筛选,如 running / exited"),
+) -> list[InstanceDetailRead]:
+    """返回容器实例,并联表带上所属项目名与服务器名。
+
+    容器看板要跨机器汇总,没有这两个名字就只能显示 UUID。
+    用 join 而不是在 Session 上逐个懒加载:后者是 N+1 查询,
+    容器数量一多就会把一次看板刷新变成几十次往返。
+    """
+    stmt = (
+        select(
+            Instance,
+            Project.name.label("project_name"),
+            Server.id.label("server_id"),
+            Server.name.label("server_name"),
+        )
+        .join(Project, Project.id == Instance.project_id)
+        .join(Server, Server.id == Project.server_id)
+        .order_by(Server.name, Project.name, Instance.name)
+    )
+    if server_id is not None:
+        stmt = stmt.where(Project.server_id == server_id)
+    if state is not None:
+        stmt = stmt.where(Instance.state == state)
+
+    return [
+        InstanceDetailRead(
+            id=inst.id,
+            project_id=inst.project_id,
+            name=inst.name,
+            image=inst.image,
+            state=inst.state,
+            health=inst.health,
+            mem_used_mb=inst.mem_used_mb,
+            mem_limit_mb=inst.mem_limit_mb,
+            updated_at=inst.updated_at,
+            project_name=project_name,
+            server_id=server_id_,
+            server_name=server_name,
+            started_at=inst.started_at,
+            exit_code=inst.exit_code,
+        )
+        for inst, project_name, server_id_, server_name in db.execute(stmt)
+    ]
+
+
 @router.get("/events", response_model=list[EventRead], summary="事件列表")
 def list_events(
     db: Session = Depends(get_db),
@@ -343,6 +415,22 @@ def acknowledge_event(event_id: int, db: Session = Depends(get_db), _: User = De
     db.commit()
     db.refresh(event)
     return event
+
+
+@router.post("/events/ack-all", summary="全部标记已读")
+def acknowledge_all(
+    db: Session = Depends(get_db),
+    _: User = Depends(require("view")),
+) -> dict[str, int]:
+    """把所有未读事件一次性标记为已处理。
+
+    告警积压往往是一次性噪声退潮后的残留(几十条同类),逐条点 ack
+    既是折磨也是劝退 —— 批量清掉,未读数才有机会真正归零。
+    只动 acknowledged 位,不删除任何数据:审计上"看过并处理过"必须留痕。
+    """
+    updated = db.execute(update(Event).where(Event.acknowledged.is_(False)).values(acknowledged=True)).rowcount
+    db.commit()
+    return {"acked": updated}
 
 
 @router.post("/detect", summary="立即执行一轮告警检测")

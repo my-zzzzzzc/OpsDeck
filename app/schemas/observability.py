@@ -109,6 +109,25 @@ class InstanceRead(BaseModel):
     updated_at: datetime
 
 
+class InstanceDetailRead(InstanceRead):
+    """实例读取模型(带所属项目与服务器名)。
+
+    容器看板要跨服务器汇总,每个容器必须能说清"它属于哪个项目、跑在哪台机器上"。
+    单独一个模型而不是往 InstanceRead 里加字段:后者是上报端与采集器共用的契约,
+    扩展它会让所有读 InstanceRead 的地方都以为拿到了联表数据。
+    """
+
+    project_name: str | None = None
+    server_id: uuid.UUID | None = None
+    server_name: str | None = None
+    # 容器的启动时间与退出码。「容器」页要算运行时长、要看退出码,
+    # 而这两列在 models.Instance 里已经存在,只是此前没往外吐。
+    # 注意:采集器目前不上报这两个值,所以它们常常是 None —— 前端必须
+    # 把 None 渲染成「—」而不是 0 或 1970 年。
+    started_at: datetime | None = None
+    exit_code: int | None = None
+
+
 class EventRead(BaseModel):
     """事件读取模型。"""
 

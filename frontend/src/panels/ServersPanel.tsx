@@ -25,6 +25,7 @@ import { ColumnHeader, MeterCell, StatusDot, ValueCell, meterState } from '../me
 import { Badge, Card, Empty, GhostButton, SectionTitle } from '../ui'
 import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { ServerDetail } from './ServerDetail'
+import { SshCredentialDialog } from './SshCredentialDialog'
 
 /**
  * 服务器列表。
@@ -87,6 +88,8 @@ export function ServersPanel({ user }: { user: { role: string } }) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [active, setActive] = useState<Server | null>(null)
   const [detail, setDetail] = useState<Server | null>(null)
+  /** 正在编辑 SSH 凭据的服务器。 */
+  const [credTarget, setCredTarget] = useState<Server | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -305,6 +308,9 @@ export function ServersPanel({ user }: { user: { role: string } }) {
                 <GhostButton onClick={() => setActive(server)}>连接</GhostButton>
               ) : null}
               {isAdmin ? (
+                <GhostButton onClick={() => setCredTarget(server)}>凭据</GhostButton>
+              ) : null}
+              {isAdmin ? (
                 <GhostButton onClick={() => void toggleTerminal(server)}>
                   {server.terminal_enabled ? '关终端' : '开终端'}
                 </GhostButton>
@@ -314,7 +320,7 @@ export function ServersPanel({ user }: { user: { role: string } }) {
         },
       }),
     ],
-    [isAdmin, setDetail],
+    [isAdmin, setCredTarget],
   )
 
   const table = useReactTable({
@@ -405,6 +411,17 @@ export function ServersPanel({ user }: { user: { role: string } }) {
           server={active}
           onClose={() => {
             setActive(null)
+            void load()
+          }}
+        />
+      ) : null}
+
+      {credTarget ? (
+        <SshCredentialDialog
+          server={credTarget}
+          onClose={() => {
+            setCredTarget(null)
+            // 重新拉一次:用户名/端口可能已改,列表上的状态需要跟着更新
             void load()
           }}
         />

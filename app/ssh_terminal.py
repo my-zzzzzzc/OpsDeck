@@ -116,7 +116,8 @@ class SSHTerminal:
         kwargs: dict = {
             "host": target,
             "port": self.server.ssh_port or 22,
-            "username": "root",
+            # 逐台可配:有些云镜像禁用了 root 登录,只给 ubuntu 之类的用户
+            "username": self.server.ssh_user or "root",
             "known_hosts": None,  # 首次接入新机器时无已知主机键
             "connect_timeout": 15,
             # 禁用所有交互式认证,只用密钥。避免因等待密码输入而挂起。

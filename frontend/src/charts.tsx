@@ -515,6 +515,12 @@ export function MetricLineChart({
  *   px-3 py-5 sm:px-6 sm:py-6 / 标题 1.4rem→sm:2xl 加粗 / 说明 text-sm /
  *   图表区 h-48 md:h-52(带图例 h-54 md:h-56)
  * 标题字号是这轮"像不像"的关键 —— 之前写成 13px,和参考稿差了近一倍。
+ *
+ * `compact` 是给**一屏多张**的场景(首页的 2×2 图表墙)用的。
+ * 上面那套尺寸是为"一页一两张大图"调的:1.4rem 的标题在首页比页面标题
+ * 还大,四张 h-52 的图纵向铺开又要吃掉一千多像素 —— 版面重心全跑到图表上,
+ * 而首页真正的主角是上面那排读数。紧凑档把小标题收到 12.5px、
+ * 图表区压到 h-32,四张图一屏看得完,详情页仍用原尺寸。
  */
 export function ChartCard({
   title,
@@ -523,6 +529,7 @@ export function ChartCard({
   legend,
   children,
   className,
+  compact = false,
 }: {
   title: string
   description?: React.ReactNode
@@ -531,30 +538,63 @@ export function ChartCard({
   legend?: React.ReactNode
   children: React.ReactNode
   className?: string
+  /** 紧凑档:小标题 + 矮图表区,用于一屏多张图。 */
+  compact?: boolean
 }) {
   return (
     <div
       className={cn(
         // 后两条来自 Beszel ChartCard 的 odd:last-of-type:col-span-full min-h-full ——
         // 图表总数为奇数时,最后一张占满整行,不然右下角会空出一块。
-        'rounded-lg border border-line bg-primary px-3 py-5 sm:px-6 sm:py-6',
-        'odd:last-of-type:col-span-full min-h-full',
+        // 紧凑档不要那两条:2×2 网格里正好四张,占满是多余的,
+        // 而 min-h-full 会让某张图被同伴撑高。
+        compact
+          ? 'rounded-lg border border-line bg-primary px-3 py-3 sm:px-4'
+          : 'rounded-lg border border-line bg-primary px-3 py-5 sm:px-6 sm:py-6',
+        compact ? '' : 'odd:last-of-type:col-span-full min-h-full',
         className,
       )}
     >
-      <div className="relative mb-3 grid gap-1.5 sm:mb-4">
-        <h3 className="text-[1.4rem] leading-none font-semibold tracking-tight text-ink sm:text-2xl">
+      <div className={cn('relative grid', compact ? 'mb-1.5 gap-0.5' : 'mb-3 gap-1.5 sm:mb-4')}>
+        <h3
+          className={cn(
+            'leading-none font-semibold tracking-tight text-ink',
+            compact ? 'text-[12.5px]' : 'text-[1.4rem] sm:text-2xl',
+          )}
+        >
           {title}
         </h3>
-        {description ? <p className="text-sm text-ink-tertiary">{description}</p> : null}
+        {/* 紧凑档不出说明文字:四张图各自带一句"随时间变化"是纯占位噪声 */}
+        {description && !compact ? <p className="text-sm text-ink-tertiary">{description}</p> : null}
         {action ? (
-          <div className="my-1 grid sm:absolute sm:end-0 sm:top-0 sm:my-0 sm:justify-end">{action}</div>
+          <div
+            className={cn(
+              'grid justify-end',
+              compact ? 'my-0' : 'my-1 sm:absolute sm:end-0 sm:top-0 sm:my-0',
+            )}
+          >
+            {action}
+          </div>
         ) : null}
       </div>
 
-      <div className={cn('relative -me-1 -ms-3.5 ps-0', legend ? 'h-54 md:h-56' : 'h-48 md:h-52')}>
-        <div className={cn('h-full w-full', legend ? 'pb-6' : undefined)}>{children}</div>
-        {legend ? <div className="absolute inset-x-0 bottom-0 flex justify-center">{legend}</div> : null}
+      <div
+        className={cn(
+          'relative ps-0',
+          compact ? '-me-0.5 -ms-3' : '-me-1 -ms-3.5',
+          compact
+            ? legend
+              ? 'h-36'
+              : 'h-32'
+            : legend
+              ? 'h-54 md:h-56'
+              : 'h-48 md:h-52',
+        )}
+      >
+        <div className={cn('h-full w-full', legend ? (compact ? 'pb-5' : 'pb-6') : undefined)}>{children}</div>
+        {legend ? (
+          <div className="absolute inset-x-0 bottom-0 flex justify-center">{legend}</div>
+        ) : null}
       </div>
     </div>
   )

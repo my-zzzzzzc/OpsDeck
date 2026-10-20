@@ -166,3 +166,72 @@ def rotate_server_token(
     db.commit()
     db.refresh(server)
     return server
+
+
+@router.post("/{server_id}/ssh-test", summary="测试 SSH 连接")
+async def test_ssh(
+    server_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("manage")),
+) -> dict[str, object]:
+    """用当前配置的凭据实际连一次目标机,返回成功与否。
+
+    为什么值得单独做一个接口:凭据填错了,症状是"日志/终端一直失败",
+    而错误信息往往埋在服务端日志里。让用户在保存前点一下就拿到明确结论
+    (认证失败 / 连不上 / 密钥读不到),比事后翻日志省事得多。
+
+    只执行 `true`,不碰 docker,也不改变目标机任何状态。
+    """
+    import asyncssh
+
+    server = _get_server_or_404(db, server_id)
+    target = server.ip or server.hostname
+    if not target:
+        return {"ok": False, "stage": "config", "message": "服务器未配置 IP 或主机名"}
+
+    key_path = server.ssh_key_path
+    if key_path:
+        # 路径写错的表现是"认证失败",但真实原因是文件不存在 —— 提前分开报。
+        from pathlib import Path
+
+        if not Path(key_path).exists():
+            return {"ok": False, "stage": "key", "message": f"私钥文件不存在:{key_path}"}
+
+    try:
+        conn = await asyncssh.connect(
+            host=target,
+            port=server.ssh_port or 22,
+            username=server.ssh_user or "root",
+            known_hosts=None,
+            connect_timeout=10,
+            client_keys=[key_path] if key_path else None,
+            preferred_auth=["publickey"],
+        )
+    except asyncssh.PermissionDenied:
+        return {
+            "ok": False,
+            "stage": "auth",
+            "message": (
+                f"认证失败:用户 {server.ssh_user or 'root'} 无法登录。"
+                "请确认目标机已把对应公钥加入该用户的 authorized_keys。"
+            ),
+        }
+    except (OSError, asyncssh.Error) as exc:
+        return {"ok": False, "stage": "connect", "message": f"无法连接 {target}:{server.ssh_port} — {exc}"}
+
+    try:
+        result = await conn.run("true", check=False)
+        if result.exit_status != 0:
+            return {"ok": False, "stage": "exec", "message": f"命令执行失败(退出码 {result.exit_status})"}
+        # docker 权限单独探一次:能登录不等于能读容器,这两个失败长得完全不一样
+        docker = await conn.run("docker ps -q >/dev/null 2>&1 && echo YES || echo NO", check=False)
+        has_docker = "YES" in (docker.stdout or "")
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "stage": "done",
+        "message": "连接成功" if has_docker else "SSH 连接成功,但该用户无法执行 docker 命令(不在 docker 组或缺少权限)",
+        "docker": has_docker,
+    }

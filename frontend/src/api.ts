@@ -4,6 +4,10 @@ export interface Server {
   hostname: string | null
   ip: string | null
   ssh_port: number
+  /** SSH 登录用户名。默认 root;只允许 ubuntu 登录的镜像需改这里。 */
+  ssh_user: string
+  /** 专用私钥在 OpsDeck 容器内的路径。null 表示用默认密钥。 */
+  ssh_key_path: string | null
   os_info: string | null
   cpu_cores: number | null
   mem_total_mb: number | null
@@ -67,6 +71,18 @@ export interface Instance {
   mem_used_mb: number | null
   mem_limit_mb: number | null
   updated_at: string
+}
+
+/**
+ * 容器实例(带所属项目与服务器)。
+ *
+ * 容器看板要跨机器汇总,每个容器必须能说清"属于哪个项目、跑在哪台机器上"。
+ * 后端用 join 一次查出来,前端不用再拿 project_id 去翻表。
+ */
+export interface InstanceDetail extends Instance {
+  project_name: string | null
+  server_id: string | null
+  server_name: string | null
 }
 
 export interface EventItem {
@@ -249,6 +265,12 @@ export const api = {
   // 资产与观测
   overview: () => request<Overview>('/overview'),
   servers: () => request<Server[]>('/servers'),
+  /** 用当前已保存的凭据实际连一次目标机。 */
+  testServerSsh: (id: string) =>
+    request<{ ok: boolean; message: string; stage?: string; docker?: boolean }>(
+      `/servers/${id}/ssh-test`,
+      { method: 'POST' },
+    ),
   updateServer: (id: string, body: Record<string, unknown>) =>
     request<Server>(`/servers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   projects: (serverId?: string) =>
@@ -267,8 +289,13 @@ export const api = {
     ),
   instances: (serverId?: string) =>
     request<Instance[]>(`/instances${serverId ? `?server_id=${serverId}` : ''}`),
+  /** 容器实例,带项目名与服务器名,供跨机器汇总的容器看板使用。 */
+  instancesDetail: (serverId?: string) =>
+    request<InstanceDetail[]>(`/instances/detail${serverId ? `?server_id=${serverId}` : ''}`),
   events: (limit = 50) => request<EventItem[]>(`/events?limit=${limit}`),
   ackEvent: (id: number) => request<EventItem>(`/events/${id}/ack`, { method: 'POST' }),
+  /** 一次性把所有未读事件标记为已处理,返回处理条数。 */
+  ackAllEvents: () => request<{ acked: number }>('/events/ack-all', { method: 'POST' }),
 
   // Dify 应用
   difyApps: () => request<DifyApp[]>('/dify/apps'),
