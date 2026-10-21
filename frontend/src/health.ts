@@ -10,15 +10,15 @@
  * "这个黄和那个黄是不是一回事"。
  */
 
-/** 健康度三级。与 Twenty 的语义色一一对应。 */
+/** 健康度三级。颜色只表达「是否需要处理」。 */
 export type Health = 'ok' | 'warn' | 'bad'
 
 export const HEALTH_LABEL: Record<Health, string> = { ok: '正常', warn: '降级', bad: '异常' }
 
 export const HEALTH = {
-  ok: { dot: 'bg-ink-success', text: 'text-ink-secondary', bar: 'bg-ink-success', row: '' },
-  warn: { dot: 'bg-ink-warning', text: 'text-ink-warning', bar: 'bg-ink-warning', row: 'bg-tint-orange' },
-  bad: { dot: 'bg-ink-danger', text: 'text-ink-danger', bar: 'bg-ink-danger', row: 'bg-tint-danger' },
+  ok: { dot: 'bg-status-ok', text: 'text-ink-secondary', bar: 'bg-status-ok', row: '' },
+  warn: { dot: 'bg-status-warn', text: 'text-ink-warning', bar: 'bg-status-warn', row: 'bg-tint-warning' },
+  bad: { dot: 'bg-status-bad', text: 'text-ink-danger', bar: 'bg-status-bad', row: 'bg-tint-danger' },
 } as const
 
 /** 严重度排序:数值越小越严重。用于排序与"取最严重的一项"。 */

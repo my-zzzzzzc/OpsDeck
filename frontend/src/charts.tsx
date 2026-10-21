@@ -399,7 +399,7 @@ export function MetricAreaChart({
           />
 
           <Tooltip
-            cursor={{ stroke: 'var(--t-font-color-tertiary)', strokeOpacity: 0.3 }}
+            cursor={{ stroke: 'var(--od-tertiary-foreground)', strokeOpacity: 0.3 }}
             content={<ChartTooltipInner formatter={valueFormatter} time={time} /> as never}
           />
 
@@ -510,7 +510,7 @@ export function MetricLineChart({
           />
 
           <Tooltip
-            cursor={{ stroke: 'var(--t-font-color-tertiary)', strokeOpacity: 0.3 }}
+            cursor={{ stroke: 'var(--od-tertiary-foreground)', strokeOpacity: 0.3 }}
             content={<ChartTooltipInner formatter={valueFormatter} time={time} /> as never}
           />
 

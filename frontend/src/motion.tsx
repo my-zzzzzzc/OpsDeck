@@ -193,7 +193,7 @@ export function Skeleton({ className = '', style }: { className?: string; style?
 /** 卡片骨架。 */
 export function CardSkeleton({ lines = 3 }: { lines?: number }) {
   return (
-    <div className="rounded-md border-[0.5px] border-line bg-primary p-4">
+    <div className="rounded-lg border border-line bg-primary p-4">
       <Skeleton className="mb-3 h-4 w-1/3" />
       {Array.from({ length: lines }).map((_, i) => (
         <Skeleton key={i} className="mb-2 h-3 w-full last:mb-0" style={{ width: `${90 - i * 12}%` }} />

@@ -5,7 +5,7 @@ import type { ReactNode, SVGProps } from 'react'
  *
  * 为什么自己画而不用图标库:
  *   - 项目只用到十几个图标,引入 lucide-react 会多出一个运行时依赖与一份 chunk;
- *   - 描边宽度、端点、视觉重量需要和 Twenty 的 13px 正文统一,自绘才好控制。
+ *   - 描边宽度、端点、视觉重量需要和 13px 正文统一,自绘才好控制。
  *
  * 规格:24 网格、1.6 描边、圆角端点、currentColor 着色,颜色一律由外层文字色决定。
  */

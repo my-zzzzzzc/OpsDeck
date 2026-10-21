@@ -1,0 +1,103 @@
+/*
+ * Beszel 视觉令牌。
+ *
+ * 色值取自 Beszel(internal/site/src/index.css),保留它“暖灰画布 + 白色面板”
+ * 的明暗两套表面,以及 0.8rem 的卡片圆角。Twenty 的 token 文件保持原样,
+ * 这里只提供 OpsDeck 自己的语义层,组件通过 theme-bridge.css 消费。
+ *
+ * 刻意没有把 `--primary` 直接映射成品牌色:Beszel 的主操作是**单色反转**,
+ * 蓝/紫只留给图表线。因此文本与按钮走 foreground,inverted 走白底黑字。
+ */
+
+:root {
+  color-scheme: light;
+
+  --od-radius: 0.8rem;
+
+  /* 表面层级 */
+  --od-background: hsl(30 8% 98%);
+  --od-card: hsl(30 0% 100%);
+  --od-secondary: hsl(240 4.76% 95.88%);
+  --od-muted: hsl(26 6% 94%);
+  --od-accent-surface: hsl(20 23.08% 94%);
+  --od-table-header: hsl(225 6% 97%);
+
+  /* 文字 */
+  --od-foreground: hsl(30 0% 10%);
+  --od-secondary-foreground: hsl(24 2.79% 35.1%);
+  --od-tertiary-foreground: hsl(24 3.5% 46%);
+
+  /* 主操作:近黑反转 */
+  --od-primary: hsl(240 5.88% 10%);
+  --od-primary-hover: hsl(240 5% 22%);
+  --od-primary-foreground: hsl(30 0% 100%);
+
+  /* 状态色:绿 / 黄 / 红,只表达好坏,不做装饰 */
+  --od-success: hsl(140 52% 32%);
+  --od-success-fill: hsl(140 50% 45%);
+  --od-success-surface: hsl(140 50% 92%);
+  --od-warning: hsl(37 92% 31%);
+  --od-warning-fill: hsl(42 92% 48%);
+  --od-warning-surface: hsl(46 92% 90%);
+  --od-danger: hsl(0 66% 43%);
+  --od-danger-fill: hsl(0 66% 53%);
+  --od-danger-surface: hsl(0 72% 95%);
+  --od-danger-border: hsl(0 55% 84%);
+
+  /* 描边与控件 */
+  --od-border: hsl(30 8.11% 85.49%);
+  --od-input: hsl(30 4.29% 72.55%);
+  --od-ring: hsl(30 3.97% 49.41%);
+
+  /* 交互叠加层 */
+  --od-overlay-lighter: hsl(30 8% 10% / 0.025);
+  --od-overlay-light: hsl(30 8% 10% / 0.045);
+  --od-overlay-medium: hsl(30 8% 10% / 0.08);
+  --od-overlay-strong: hsl(30 8% 10% / 0.16);
+
+  --od-shadow-xs: 0 1px 2px 0 hsl(30 8% 10% / 0.04);
+  --od-shadow-sm: 0 1px 3px 0 hsl(30 8% 10% / 0.06), 0 1px 2px -1px hsl(30 8% 10% / 0.06);
+}
+
+.dark,
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  --od-background: hsl(220 5.5% 9%);
+  --od-card: hsl(220 5.5% 10.5%);
+  --od-secondary: hsl(220 4% 16%);
+  --od-muted: hsl(220 6% 16%);
+  --od-accent-surface: hsl(220 5% 15.5%);
+  --od-table-header: hsl(220 6% 13%);
+
+  --od-foreground: hsl(220 2% 97%);
+  --od-secondary-foreground: hsl(220 4% 67%);
+  --od-tertiary-foreground: hsl(220 4% 56%);
+
+  --od-primary: hsl(220 2% 96%);
+  --od-primary-hover: hsl(220 4% 84%);
+  --od-primary-foreground: hsl(220 4% 10%);
+
+  --od-success: hsl(140 52% 62%);
+  --od-success-fill: hsl(140 50% 48%);
+  --od-success-surface: hsl(140 32% 14%);
+  --od-warning: hsl(45 93% 62%);
+  --od-warning-fill: hsl(42 92% 52%);
+  --od-warning-surface: hsl(40 40% 15%);
+  --od-danger: hsl(0 72% 68%);
+  --od-danger-fill: hsl(0 62% 52%);
+  --od-danger-surface: hsl(0 35% 15%);
+  --od-danger-border: hsl(0 38% 30%);
+
+  --od-border: hsl(220 3% 17%);
+  --od-input: hsl(220 4% 22%);
+  --od-ring: hsl(220 4% 80%);
+
+  --od-overlay-lighter: hsl(220 10% 96% / 0.03);
+  --od-overlay-light: hsl(220 10% 96% / 0.055);
+  --od-overlay-medium: hsl(220 10% 96% / 0.09);
+  --od-overlay-strong: hsl(220 10% 96% / 0.16);
+
+  --od-shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+  --od-shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.4), 0 1px 2px -1px hsl(0 0% 0% / 0.4);
+}

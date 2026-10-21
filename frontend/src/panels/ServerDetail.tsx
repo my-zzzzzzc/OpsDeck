@@ -215,7 +215,7 @@ export function ServerDetail({
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} aria-hidden />
                   <div className="absolute end-0 top-full z-50 mt-1 min-w-40 rounded-md border border-line bg-primary p-1 shadow-lg">
-                    <div className="px-2.5 py-1.5 text-[11px] font-medium tracking-wider text-ink-tertiary uppercase">
+                    <div className="px-2.5 py-1.5 text-[10.5px] font-medium text-ink-tertiary">
                       图表宽度
                     </div>
                     {[

@@ -202,7 +202,7 @@ export function NotificationBell({
         <div
           role="dialog"
           aria-label="通知"
-          className="absolute end-0 top-full z-50 mt-2 flex max-h-[min(560px,70vh)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border-[0.5px] border-line bg-primary shadow-2xl"
+          className="absolute end-0 top-full z-50 mt-2 flex max-h-[min(560px,70vh)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-line bg-primary shadow-lg"
         >
           {/* 头:一句话给结论,再给明细 */}
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5">
@@ -303,7 +303,7 @@ export function NotificationBell({
                       type="button"
                       onClick={() => void ackGroup(g.ids)}
                       title="标记这一组为已读"
-                      className="mt-0.5 flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] text-ink-tertiary transition-colors hover:bg-tint-blue hover:text-accent"
+                      className="mt-0.5 flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] text-ink-tertiary transition-colors hover:bg-accent-soft hover:text-ink"
                     >
                       <IconCheck size={12} />
                       已读

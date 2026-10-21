@@ -25,9 +25,9 @@ export function meterState(pct: number, warn = DEFAULT_WARN, crit = DEFAULT_CRIT
 }
 
 const FILL: Record<MeterState, string> = {
-  good: 'bg-ink-success',
-  warn: 'bg-ink-warning',
-  crit: 'bg-ink-danger',
+  good: 'bg-status-ok',
+  warn: 'bg-status-warn',
+  crit: 'bg-status-bad',
   paused: 'bg-ink-tertiary',
 }
 

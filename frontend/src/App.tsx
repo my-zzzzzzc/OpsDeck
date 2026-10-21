@@ -86,8 +86,8 @@ function toChartPoint(m: Metric): ChartPoint {
  *
  * 三层,按回答顺序排:
  *   1. 状态卡(DashboardHero)——「有没有事」,锁定部署机,同时给出四项当前水位;
- *   2. 资源趋势(TrendCard)——「有多紧」,左侧服务器栏可切到任意一台;
- *   3. 容器状态(ContainerBoard)——「哪里有事」,汇总所有机器。
+ *   2. 容器状态(ContainerBoard)——「哪里有事」,宽屏时在左;
+ *   3. 资源趋势(TrendCard)——「有多紧」,宽屏时在右,服务器栏可切到任意一台。
  *
  * 为什么部署机仍然是默认焦点:
  * 这一页首先要回答"我自己的服务跑得怎么样"。所以本机钉在服务器栏第一位、
@@ -152,7 +152,7 @@ function Dashboard({
    * 页面会不停闪动,反而让人以为出问题了。
    *
    * 事件与服务器列表不在这里拉:它们来自应用层的 `useAlerts`,
-   * 与页头铃铛同源。看板再拉一份就会出现"角标 3 条、读数格 2 条"。
+   * 与顶栏铃铛同源。看板再拉一份就会出现"角标 3 条、读数格 2 条"。
    */
   const load = useCallback(async (showBusy = false) => {
     if (showBusy) setBusy(true)
@@ -356,7 +356,7 @@ function Dashboard({
             服务器 / 内存;趋势图两条线在较窄的列里仍然可读。窄屏按 DOM 顺序
             上下排列,容器优先,符合"先看清哪里有事"的使用顺序。
           */}
-          <div className="grid gap-3 min-[1360px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] min-[1360px]:items-stretch">
+          <div className="grid gap-3 min-[1360px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] min-[1360px]:items-start">
             <ContainerBoard
               containers={containers}
               error={containersError}
@@ -450,11 +450,11 @@ function LiveBadge({ stale }: { stale: boolean }) {
     >
       <span className="relative flex size-1.5">
         {stale ? null : (
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-ink-success opacity-60" />
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-status-ok opacity-60" />
         )}
         <span
           className={`relative inline-flex size-1.5 rounded-full ${
-            stale ? 'bg-ink-danger' : 'bg-ink-success'
+            stale ? 'bg-status-bad' : 'bg-status-ok'
           }`}
         />
       </span>
@@ -470,7 +470,7 @@ function LiveBadge({ stale }: { stale: boolean }) {
  *
  * 1. **通知入口要跨页可用。** 铃铛挂在顶栏,用户在「服务器」「项目」页时
  *    同样需要看到"有几条没读"。数据如果锁在 Dashboard 里,换个页签就瞎了。
- * 2. **两个消费者必须同源。** 页头铃铛的角标和通知面板里的列表都读这一个
+ * 2. **两个消费者必须同源。** 顶栏铃铛的角标和通知面板里的列表都读这一个
  *    `events` —— 各拉各的迟早会出现"角标写 3、列出来只有 2 条"。
  *
  * 轮询节奏跟看板一致(15 秒)。这是告警,不是趋势图,慢一拍就没有意义。
@@ -534,7 +534,7 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [navOpen, setNavOpen] = useState(false)
   const isAdmin = user.role === 'admin'
 
-  // 告警数据全体共享:页头铃铛、通知面板、看板读数格读的都是这一份
+  // 告警数据全体共享:顶栏铃铛、通知面板、看板读数格读的都是这一份
   const alerts = useAlerts()
 
   useEffect(() => {
@@ -573,6 +573,7 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
           onLogout={onLogout}
           onOpenNav={() => setNavOpen(true)}
           canSee={canSee}
+          alerts={alerts}
         />
 
         {/* 不要给这一行加 items-start:侧边栏靠 sticky 跟随滚动,
@@ -608,33 +609,16 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
                   ) : null
                 }
                 actions={
-                  <span className="flex items-center gap-2">
-                    {/*
-                      通知入口。常驻在页头 —— 告警不属于某一页,
-                      翻到「服务器」「项目」时同样需要知道有几条没读。
-                    */}
-                    <NotificationBell
-                      events={alerts.events}
-                      servers={alerts.servers}
-                      unacked={alerts.unacked}
-                      critical={alerts.critical}
-                      onAck={alerts.ack}
-                      onAckAll={async () => {
-                        await api.ackAllEvents()
-                        alerts.reload()
-                      }}
-                    />
-                    {tab === 'dashboard' ? (
-                      <IconButton
-                        label="刷新数据"
-                        onClick={meta.refresh}
-                        disabled={meta.busy}
-                        spinning={meta.busy}
-                      >
-                        <IconRefresh size={14} />
-                      </IconButton>
-                    ) : null}
-                  </span>
+                  tab === 'dashboard' ? (
+                    <IconButton
+                      label="刷新数据"
+                      onClick={meta.refresh}
+                      disabled={meta.busy}
+                      spinning={meta.busy}
+                    >
+                      <IconRefresh size={14} />
+                    </IconButton>
+                  ) : null
                 }
               />
             </header>
@@ -672,7 +656,7 @@ export function App({ user, onLogout }: { user: User; onLogout: () => void }) {
 /**
  * 顶栏。
  *
- * 导航搬进侧边栏之后,顶栏只留三件事:品牌、搜索、右侧的主题与账号。
+ * 导航搬进侧边栏之后,顶栏只留三件事:品牌、搜索、右侧的通知、主题与账号。
  *
  * 版式取自 Komodo 的 topbar —— 三列网格:左品牌、**中间放全局搜索**、
  * 右侧一排动作。搜索能占中间,正是因为导航下移到了侧边栏:
@@ -688,6 +672,7 @@ function TopNav({
   onLogout,
   onOpenNav,
   canSee,
+  alerts,
 }: {
   tab: Tab
   setTab: (t: Tab) => void
@@ -695,6 +680,7 @@ function TopNav({
   onLogout: () => void
   onOpenNav: () => void
   canSee: (k: Tab) => boolean
+  alerts: ReturnType<typeof useAlerts>
 }) {
   const { theme, setTheme } = useTheme()
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -753,14 +739,14 @@ function TopNav({
 
   return (
     <>
-      <nav className="my-4 flex h-14 items-center gap-3 rounded-lg border border-line bg-primary px-4 pe-3 sm:h-16 sm:px-6">
+      <nav className="relative my-4 flex h-14 items-center gap-3 rounded-lg border border-line bg-primary px-4 pe-3 shadow-xs sm:h-16 sm:px-5">
         {/* 汉堡:窄屏侧边栏收成抽屉,入口得留在这里 */}
         <button
           type="button"
           onClick={onOpenNav}
           aria-label="打开导航"
           title="导航"
-          className="-ms-1 flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-tertiary transition-colors hover:bg-overlay-light hover:text-ink lg:hidden"
+          className="-ms-1 flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-tertiary transition-colors hover:bg-accent-soft hover:text-ink lg:hidden"
         >
           <IconMenu size={18} />
         </button>
@@ -772,10 +758,10 @@ function TopNav({
           aria-label="OpsDeck 首页"
           className="flex shrink-0 cursor-pointer items-center gap-2.5 p-2 ps-0"
         >
-          <span className="flex size-6 items-center justify-center rounded-md bg-accent text-on-accent">
-            <IconGauge size={14} />
+          <span className="flex size-7 items-center justify-center rounded-md bg-accent text-on-accent">
+            <IconGauge size={15} />
           </span>
-          <span className="text-[15px] font-semibold tracking-tight text-ink">OpsDeck</span>
+          <span className="text-[15px] font-semibold tracking-[-0.02em] text-ink">OpsDeck</span>
         </button>
 
         {/*
@@ -786,25 +772,36 @@ function TopNav({
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            className="hidden w-full max-w-sm cursor-pointer items-center gap-1.5 rounded-md border border-line px-4 py-1.5 text-sm text-ink-tertiary transition-colors hover:bg-overlay-light hover:text-ink sm:flex"
+            className="hidden w-full max-w-sm cursor-pointer items-center gap-1.5 rounded-md border border-line bg-background px-3.5 py-1.5 text-[13px] text-ink-tertiary transition-colors hover:bg-accent-soft hover:text-ink sm:flex"
           >
             <IconSearch size={15} />
             搜索
-            <span className="ms-3.5 flex items-center gap-1">
+            <span className="ms-auto flex items-center gap-1">
               <Kbd>{isMac ? '⌘' : 'Ctrl'}</Kbd>
               <Kbd>K</Kbd>
             </span>
           </button>
         </div>
 
-        {/* 右侧:主题 + 用户。通知入口已收进页头 */}
+        {/* 右侧:通知 + 主题 + 用户。告警不属于某一页,入口常驻顶栏 */}
         <div className="flex shrink-0 items-center gap-1">
+          <NotificationBell
+            events={alerts.events}
+            servers={alerts.servers}
+            unacked={alerts.unacked}
+            critical={alerts.critical}
+            onAck={alerts.ack}
+            onAckAll={async () => {
+              await api.ackAllEvents()
+              alerts.reload()
+            }}
+          />
           <button
             type="button"
             onClick={() => setTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length])}
             aria-label={`主题:${themeLabel}`}
             title={`主题:${themeLabel}`}
-            className="flex size-9 cursor-pointer items-center justify-center rounded-md text-ink-tertiary transition-colors hover:bg-overlay-light hover:text-ink"
+            className="flex size-9 cursor-pointer items-center justify-center rounded-md text-ink-tertiary transition-colors hover:bg-accent-soft hover:text-ink"
           >
             <ThemeIcon size={17} />
           </button>
@@ -815,9 +812,9 @@ function TopNav({
               onClick={() => setUserMenu((o) => !o)}
               aria-label="用户菜单"
               title={user.display_name || user.username}
-              className="ms-1 flex cursor-pointer items-center rounded-md p-1 transition-colors hover:bg-overlay-light"
+              className="ms-1 flex cursor-pointer items-center rounded-md p-1 transition-colors hover:bg-accent-soft"
             >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-tint-blue text-[11px] font-semibold text-accent">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold text-ink">
                 {(user.display_name || user.username).slice(0, 1).toUpperCase()}
               </span>
             </button>
@@ -835,7 +832,7 @@ function TopNav({
                   <button
                     type="button"
                     onClick={onLogout}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[13px] text-ink-secondary transition-colors hover:bg-overlay-light hover:text-ink-danger"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[13px] text-ink-secondary transition-colors hover:bg-tint-danger hover:text-ink-danger"
                   >
                     <IconLogout size={14} />
                     退出登录

@@ -165,7 +165,7 @@ export function SshCredentialDialog({ server, onClose }: { server: Server; onClo
               type="checkbox"
               checked={terminalEnabled}
               onChange={(e) => setTerminalEnabled(e.target.checked)}
-              className="size-3.5 cursor-pointer accent-[var(--t-accent)]"
+              className="size-3.5 cursor-pointer accent-[var(--od-primary)]"
             />
             <span className="text-[12px] text-ink">允许通过 Web 终端登录</span>
             <span className="ms-auto text-[10.5px] text-ink-tertiary">高危,需逐台开启</span>

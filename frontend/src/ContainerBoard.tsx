@@ -26,9 +26,9 @@ const LABEL: Record<ContainerBucket, string> = {
 }
 
 const TONE: Record<ContainerBucket, { dot: string; segment: string; text: string; row: string }> = {
-  running: { dot: 'bg-ink-success', segment: 'bg-ink-success', text: 'text-ink-success', row: '' },
-  unhealthy: { dot: 'bg-ink-warning', segment: 'bg-ink-warning', text: 'text-ink-warning', row: 'border-s-ink-warning bg-tint-orange/30' },
-  stopped: { dot: 'bg-ink-danger', segment: 'bg-ink-danger', text: 'text-ink-danger', row: 'border-s-ink-danger bg-tint-danger/30' },
+  running: { dot: 'bg-status-ok', segment: 'bg-status-ok', text: 'text-ink-success', row: '' },
+  unhealthy: { dot: 'bg-status-warn', segment: 'bg-status-warn', text: 'text-ink-warning', row: 'border-s-ink-warning bg-tint-warning/30' },
+  stopped: { dot: 'bg-status-bad', segment: 'bg-status-bad', text: 'text-ink-danger', row: 'border-s-ink-danger bg-tint-danger/30' },
   done: { dot: 'bg-ink-tertiary', segment: 'bg-ink-tertiary/50', text: 'text-ink-tertiary', row: '' },
 }
 
@@ -56,7 +56,7 @@ export function ContainerBoard({ containers, error, onOpenAll }: {
   const serverCount = new Set(containers.map((container) => container.server_id ?? container.server_name ?? '?')).size
 
   return (
-    <Card padded={false} className="overflow-hidden">
+    <Card padded={false} className="flex flex-col overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-4">
         <div className="flex min-w-0 items-start gap-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sunken text-ink-secondary"><IconBoxes size={15} /></span>
@@ -82,9 +82,9 @@ export function ContainerBoard({ containers, error, onOpenAll }: {
 
       {error ? <p className="mx-4 mt-3 rounded-md bg-tint-danger px-2.5 py-1.5 text-[11px] text-ink-danger">{error}</p> : null}
 
-      <section className="mt-3 border-t border-line">
-        <div className="flex items-center justify-between px-4 py-2.5"><span className="text-[10px] font-medium tracking-[0.12em] text-ink-tertiary uppercase">需关注的容器</span><span className="text-[10px] tabular-nums text-ink-tertiary">{issues.length} 个</span></div>
-        {containers.length === 0 ? <div className="px-4 pb-4 text-[11px] text-ink-tertiary">等待采集器上报容器状态。</div> : issues.length === 0 ? <div className="mx-4 mb-4 flex items-center gap-2 rounded-md bg-tint-success px-2.5 py-2 text-[11px] text-ink-success"><IconCheck size={12} />当前没有需要处理的容器</div> : <div className="border-t border-line">
+      <section className="mt-3 flex min-h-0 flex-1 flex-col border-t border-line">
+        <div className="flex items-center justify-between px-4 py-2.5"><span className="text-[10.5px] font-medium text-ink-tertiary">需关注的容器</span><span className="text-[10px] tabular-nums text-ink-tertiary">{issues.length} 个</span></div>
+        {containers.length === 0 ? <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-4 py-8 text-center"><IconBoxes size={18} className="text-ink-tertiary" /><p className="text-[11.5px] text-ink-secondary">等待采集器上报容器状态</p></div> : issues.length === 0 ? <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-4 py-8 text-center"><span className="flex size-9 items-center justify-center rounded-full bg-tint-success text-ink-success"><IconCheck size={16} /></span><p className="text-[11.5px] text-ink-success">当前没有需要处理的容器</p><p className="text-[10.5px] text-ink-tertiary">{counts.running} 个运行中 · {counts.done} 个已完成</p></div> : <div className="border-t border-line">
           {issues.slice(0, 5).map((container) => {
             const bucket = bucketOf(container)
             return <button key={container.id} type="button" onClick={onOpenAll} className={cn('flex w-full cursor-pointer items-center gap-2 border-b border-s-2 border-line px-4 py-2 text-left last:border-b-0 hover:bg-overlay-lighter', TONE[bucket].row)}>
@@ -95,6 +95,7 @@ export function ContainerBoard({ containers, error, onOpenAll }: {
             </button>
           })}
           {issues.length > 5 ? <p className="px-4 py-2 text-[10px] text-ink-tertiary">另有 {issues.length - 5} 个需关注项，请前往容器页处理。</p> : null}
+          {issues.length < 5 && counts.running > 0 ? <div className="flex flex-1 items-center justify-center gap-1.5 px-4 py-4 text-[10.5px] text-ink-tertiary"><IconCheck size={11} className="text-ink-success" />其余 {counts.running} 个容器运行正常</div> : null}
         </div>}
       </section>
     </Card>

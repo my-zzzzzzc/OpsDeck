@@ -424,7 +424,7 @@ export function DeployDialog({
 
           {preflight ? (
             <div>
-              <div className="mb-1 text-[10.5px] font-medium tracking-wider text-ink-tertiary uppercase">
+              <div className="mb-1 text-[10.5px] font-medium text-ink-tertiary">
                 将执行的命令
               </div>
               <pre className="mono max-h-28 overflow-auto rounded-md bg-secondary p-2.5 text-[10.5px] break-all whitespace-pre-wrap text-ink-secondary">

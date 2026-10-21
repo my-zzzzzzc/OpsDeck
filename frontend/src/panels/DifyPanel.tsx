@@ -108,7 +108,7 @@ export function DifyPanel() {
             <button
               type="submit"
               disabled={busy}
-              className="rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
+              className="rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-60"
             >
               {busy ? '登记中…' : '登记'}
             </button>

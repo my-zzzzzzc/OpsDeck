@@ -1,74 +1,83 @@
 /*
  * OpsDeck 主题桥接层。
  *
- * 设计令牌来自 Twenty(packages/twenty-ui/src/theme/),原样引入不做改动:
- *   - twenty-light.css / twenty-dark.css  原子色阶 + 语义变量
+ * 组件只认识 `bg-primary` / `text-ink` / `border-line` 这类语义工具类。
+ * 这些类在这里映射到 `styles/beszel.css` 的 OpsDeck 令牌,因此换肤
+ * 不再需要逐页改颜色,也不会出现某个面板还停在旧配色上。
  *
- * 本文件只做一件事:把 Twenty 的 `--t-*` 变量映射成 Tailwind v4 的工具类,
- * 这样组件里可以写 `bg-primary`、`text-secondary`,而不必记住 `--t-` 前缀。
+ * Twenty 的 token 文件继续作为底层色阶保留,但不再是组件配色的来源。
+ * 主色刻意是单色的:Beszel 用近黑/近白承担主操作,彩色只留给图表与状态。
  */
 
-/* Twenty 的令牌按 .light / .dark 类作用域定义,这里与 data-theme 对齐 */
-
 @theme inline {
+  --font-sans:
+    'InterVariable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+
   /* ---- 背景层级 ---- */
-  --color-primary: var(--t-background-primary);
-  --color-secondary: var(--t-background-secondary);
-  --color-tertiary: var(--t-background-tertiary);
-  --color-quaternary: var(--t-background-quaternary);
-  --color-inverted: var(--t-background-inverted-primary);
-  --color-danger-bg: var(--t-background-danger);
+  --color-background: var(--od-background);
+  --color-primary: var(--od-card);
+  --color-secondary: var(--od-secondary);
+  --color-tertiary: var(--od-background);
+  --color-quaternary: var(--od-muted);
+  --color-inverted: var(--od-primary);
+  --color-danger-bg: var(--od-danger-surface);
 
   /* 半透明叠加层:用于 hover、选中、分隔 */
-  --color-overlay-strong: var(--t-background-transparent-strong);
-  --color-overlay-medium: var(--t-background-transparent-medium);
-  --color-overlay-light: var(--t-background-transparent-light);
-  --color-overlay-lighter: var(--t-background-transparent-lighter);
+  --color-overlay-strong: var(--od-overlay-strong);
+  --color-overlay-medium: var(--od-overlay-medium);
+  --color-overlay-light: var(--od-overlay-light);
+  --color-overlay-lighter: var(--od-overlay-lighter);
 
-  /* 语义化的浅色底:用于徽标与提示条 */
-  --color-tint-danger: var(--t-background-transparent-danger);
-  --color-tint-blue: var(--t-background-transparent-blue);
-  --color-tint-orange: var(--t-background-transparent-orange);
-  --color-tint-success: var(--t-background-transparent-success);
+  /* 语义浅色底:徽标、提示条、选中行 */
+  --color-tint-danger: var(--od-danger-surface);
+  --color-tint-blue: var(--od-accent-surface);
+  --color-tint-orange: var(--od-warning-surface);
+  --color-tint-success: var(--od-success-surface);
+  --color-tint-warning: var(--od-warning-surface);
 
-  /*
-   * 卡片内的凹陷面 —— Bento 卡片里嵌在外层白卡中的浅灰方块。
-   *
-   * 层级用"底色深浅"表达,而不是"再加一道描边":一层描边只说明
-   * "这是一块区域",一层底色才说明"这块区域属于上面那张卡"。
-   *
-   * 取半透明叠加色而不是写死的灰:它在浅色下是白卡上压一层黑、
-   * 深色下是深卡上提一层白,两个主题自动落在正确的方向上,不必各写一份。
-   */
-  --color-sunken: var(--t-background-transparent-light);
+  /* 卡片内的凹陷面 */
+  --color-sunken: var(--od-muted);
+  --color-table-header: var(--od-table-header);
 
   /* ---- 文字 ---- */
-  --color-ink: var(--t-font-color-primary);
-  --color-ink-secondary: var(--t-font-color-secondary);
-  --color-ink-tertiary: var(--t-font-color-tertiary);
-  --color-ink-inverted: var(--t-font-color-inverted);
-  --color-ink-danger: var(--t-font-color-danger);
-  --color-ink-success: var(--t-color-green11);
-  --color-ink-warning: var(--t-color-orange11);
+  --color-ink: var(--od-foreground);
+  --color-ink-secondary: var(--od-secondary-foreground);
+  --color-ink-tertiary: var(--od-tertiary-foreground);
+  --color-ink-inverted: var(--od-primary-foreground);
+  --color-ink-danger: var(--od-danger);
+  --color-ink-success: var(--od-success);
+  --color-ink-warning: var(--od-warning);
+
+  /* 图表、状态点与水位条要更饱和;小字号文本仍用上面的深色状态色 */
+  --color-status-ok: var(--od-success-fill);
+  --color-status-warn: var(--od-warning-fill);
+  --color-status-bad: var(--od-danger-fill);
 
   /* ---- 边框 ---- */
-  --color-line: var(--t-border-color-medium, var(--t-background-transparent-medium));
-  --color-line-strong: var(--t-border-color-strong, var(--t-background-transparent-strong));
-  --color-line-danger: var(--t-border-color-danger);
+  --color-line: var(--od-border);
+  --color-line-strong: var(--od-input);
+  --color-line-danger: var(--od-danger-border);
+  --color-ring: var(--od-ring);
 
-  /* ---- 品牌主色 ---- */
-  --color-accent: var(--t-color-blue9);
-  --color-accent-hover: var(--t-color-blue10);
-  --color-accent-soft: var(--t-color-blue4);
-  --color-on-accent: #ffffff;
+  /* ---- 主操作:单色反转 ---- */
+  --color-accent: var(--od-primary);
+  --color-accent-hover: var(--od-primary-hover);
+  --color-accent-soft: var(--od-accent-surface);
+  --color-on-accent: var(--od-primary-foreground);
 
-  /* ---- 圆角(沿用 Twenty 刻度)---- */
-  --radius-xs: var(--t-border-radius-xs);
-  --radius-sm: var(--t-border-radius-sm);
-  --radius-md: var(--t-border-radius-md);
-  --radius-lg: var(--t-border-radius-lg);
+  /* ---- 圆角:0.8rem 基准,与 Beszel 的 shadcn 刻度一致 ---- */
+  --radius-xs: 4px;
+  --radius-sm: calc(var(--od-radius) - 4px);
+  --radius-md: calc(var(--od-radius) - 2px);
+  --radius-lg: var(--od-radius);
+  --radius-xl: calc(var(--od-radius) + 4px);
 
-  /* ---- 动效时长(沿用 Twenty 刻度)---- */
+  /* ---- 阴影 ---- */
+  --shadow-xs: var(--od-shadow-xs);
+  --shadow-sm: var(--od-shadow-sm);
+
+  /* ---- 动效时长 ---- */
   --duration-instant: calc(var(--t-animation-duration-instant) * 1s);
   --duration-fast: calc(var(--t-animation-duration-fast) * 1s);
   --duration-normal: calc(var(--t-animation-duration-normal) * 1s);

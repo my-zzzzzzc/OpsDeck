@@ -1,4 +1,3 @@
-import { Button, Chip, Skeleton as HeroSkeleton } from '@heroui/react'
 import type { CSSProperties, ReactNode } from 'react'
 
 import { CountUp } from './CountUp'
@@ -7,8 +6,8 @@ import { HEALTH, levelOf } from './health'
 /*
  * 共享原语。
  *
- * 控件用 HeroUI(Button / Chip / Skeleton),视觉规格取自 Twenty 令牌。
- * 组件内不出现硬编码颜色 —— 深浅色由 Twenty 的 .light / .dark 变量切换。
+ * 视觉规格来自 Beszel:1px 半透明描边、0.8rem 卡片圆角、单色主操作、
+ * 胶囊形状态徽标。组件里不出现硬编码颜色,明暗两套由语义令牌切换。
  */
 
 /**
@@ -30,7 +29,7 @@ export type StatTone = keyof typeof STAT_TONE
 /** 在线状态指示点。在线时带呼吸效果。 */
 export function StatusDot({ status }: { status: 'online' | 'offline' | 'unknown' }) {
   const cls =
-    status === 'online' ? 'bg-ink-success' : status === 'offline' ? 'bg-ink-danger' : 'bg-ink-tertiary'
+    status === 'online' ? 'bg-status-ok' : status === 'offline' ? 'bg-status-bad' : 'bg-ink-tertiary'
 
   const label = status === 'online' ? '在线' : status === 'offline' ? '离线' : '未知'
 
@@ -47,13 +46,14 @@ export function StatusDot({ status }: { status: 'online' | 'offline' | 'unknown'
 }
 
 /**
- * 状态徽标。基于 HeroUI 的 Chip,并映射到 Twenty 的语义色。
- * Chip 自带圆角、字号与内边距,这里只做配色映射。
+ * 状态徽标。
+ *
+ * Beszel 的徽标是胶囊形、浅色底、无描边;这里保留那套形状,
+ * 但把字号压到 10.5px,避免在密集表格里把行高顶起来。
  *
  * 两条硬约束:
- *   - shrink-0:Chip 默认 min-width:0,在窄表格里会被压扁。
- *   - 内层再包一层 whitespace-nowrap:徽标文字永远不换行。
- *     表格列宽由浏览器分配,一旦「成功」被拆成两行,整行高度都会跳。
+ *   - shrink-0:徽标不参与列宽压缩。
+ *   - 内层 whitespace-nowrap:徽标文字永远不换行。
  */
 export function Badge({
   children,
@@ -62,21 +62,31 @@ export function Badge({
   children: ReactNode
   tone?: 'ok' | 'warn' | 'bad' | 'neutral' | 'accent'
 }) {
-  const color = tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone === 'bad' ? 'danger' : tone === 'accent' ? 'accent' : 'default'
+  const cls =
+    tone === 'ok'
+      ? 'bg-tint-success text-ink-success'
+      : tone === 'warn'
+        ? 'bg-tint-warning text-ink-warning'
+        : tone === 'bad'
+          ? 'bg-tint-danger text-ink-danger'
+          : tone === 'accent'
+            ? 'bg-accent text-on-accent'
+            : 'border border-line bg-primary text-ink-secondary'
 
   return (
-    <Chip color={color} size="sm" variant="soft" className="h-5 shrink-0 px-1.5 text-[11px]">
+    <span
+      className={`inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[10.5px] font-medium ${cls}`}
+    >
       <span className="whitespace-nowrap">{children}</span>
-    </Chip>
+    </span>
   )
 }
 
 /**
  * 内容面板。
  *
- * 圆角取 lg(16px,支持 squircle 的浏览器下翻倍到 32px),而不是最初的 md(8px)。
- * 卡片越大,同一个圆角看起来越"尖" —— 8px 在 1100px 宽的看板卡上几乎看不出弧度,
- * 页面就显得硬。16px 是"明显是圆角但不至于幼稚"的位置。
+ * 白色卡片、1px 暖灰描边、12.8px 圆角和极轻的投影,是 Beszel 的主表面。
+ * 内边距保持 12px:这张卡片里往往直接放紧凑表格,再放宽会牺牲一屏的行数。
  */
 export function Card({
   children,
@@ -92,7 +102,7 @@ export function Card({
   return (
     <div
       style={style}
-      className={`rounded-lg border-[0.5px] border-line bg-primary ${padded ? 'p-3' : ''} ${className}`}
+      className={`rounded-lg border border-line bg-primary shadow-xs ${padded ? 'p-3' : ''} ${className}`}
     >
       {children}
     </div>
@@ -126,8 +136,8 @@ export function Tile({
 /**
  * 区块标题。
  *
- * 小号大写字重 medium 是 Twenty 的规格 —— 它足够安静,
- * 不会和卡片里的数字抢注意力,同时靠字距把层次拉开。
+ * Beszel 的卡片标题是句首大写、短而实,不用全大写小标签。
+ * 这里沿用它的语气,只保留 12px 半粗体与足够安静的灰色。
  */
 export function SectionTitle({
   children,
@@ -141,11 +151,9 @@ export function SectionTitle({
   action?: ReactNode
 }) {
   return (
-    <div className="mb-2 flex h-6 items-center gap-2">
+    <div className="mb-2.5 flex h-7 items-center gap-2">
       {icon ? <span className="shrink-0 text-ink-tertiary">{icon}</span> : null}
-      <h2 className="text-[11px] font-medium tracking-wider text-ink-tertiary uppercase">
-        {children}
-      </h2>
+      <h2 className="text-[12.5px] font-semibold text-ink">{children}</h2>
       {aside}
       {action ? <div className="ml-auto flex items-center gap-1">{action}</div> : null}
     </div>
@@ -179,11 +187,11 @@ export function PageHeader({
     <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <h1 className="text-[19px] leading-6 font-semibold tracking-tight text-ink">{title}</h1>
+          <h1 className="text-[22px] leading-7 font-semibold tracking-[-0.025em] text-ink">{title}</h1>
           {badge}
         </div>
         {description ? (
-          <p className="mt-1 text-[12.5px] text-ink-tertiary">{description}</p>
+          <p className="mt-1 text-[13px] text-ink-tertiary">{description}</p>
         ) : null}
       </div>
       {meta || actions ? (
@@ -217,7 +225,7 @@ export function IconButton({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-[0.5px] border-line bg-primary text-ink-tertiary transition-colors hover:bg-overlay-light hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-line bg-primary text-ink-tertiary transition-colors hover:bg-accent-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span className={spinning ? 'animate-spin' : ''}>{children}</span>
     </button>
@@ -367,7 +375,8 @@ export function StatStrip({
 }
 
 /**
- * 次要按钮。用 HeroUI 的 Button,变体映射到 Twenty 的中性色。
+ * 次要按钮。对应 Beszel 的 outline / secondary 按钮:
+ * 白底、1px 描边,hover 时才浮出浅色表面。
  */
 export function GhostButton({
   children,
@@ -381,20 +390,20 @@ export function GhostButton({
   title?: string
 }) {
   return (
-    <Button
-      size="sm"
-      variant="secondary"
-      isDisabled={disabled}
-      onPress={onClick}
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
       aria-label={title}
-      className="h-6 min-w-0 rounded-sm px-2 text-[11px] font-medium"
+      title={title}
+      className="inline-flex h-7 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-md border border-line bg-primary px-2.5 text-[11.5px] font-medium whitespace-nowrap text-ink-secondary transition-colors hover:bg-accent-soft hover:text-ink disabled:pointer-events-none disabled:opacity-50"
     >
       {children}
-    </Button>
+    </button>
   )
 }
 
-/** 主按钮。 */
+/** 主按钮。Beszel 的主操作是单色反转,不用品牌蓝。 */
 export function PrimaryButton({
   children,
   onClick,
@@ -407,20 +416,18 @@ export function PrimaryButton({
   type?: 'button' | 'submit'
 }) {
   return (
-    <Button
+    <button
       type={type}
-      size="sm"
-      variant="primary"
-      isDisabled={disabled}
-      onPress={onClick}
-      className="h-7 min-w-0 rounded-sm px-3 text-[12px] font-medium"
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex h-8 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-medium whitespace-nowrap text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50"
     >
       {children}
-    </Button>
+    </button>
   )
 }
 
 /** 骨架块。包一层以统一圆角与动效节奏。 */
 export function Skeleton({ className = '' }: { className?: string }) {
-  return <HeroSkeleton className={`rounded-sm ${className}`} />
+  return <div className={`animate-pulse rounded-md bg-overlay-medium ${className}`} />
 }

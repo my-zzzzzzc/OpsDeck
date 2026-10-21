@@ -1,38 +1,39 @@
 ---
 name: OpsDeck
-description: 服务器与容器运维控制台。高信息密度的表格优先界面，克制的语义色，深浅双主题。
-version: 1.1.0
-updated: 2026-10-14
+description: 服务器与容器运维控制台。高信息密度、Beszel 式暖灰表面、单色主操作、克制的语义色，深浅双主题。
+version: 1.2.0
+updated: 2026-10-21
 
 colors:
-  # 以下为 Twenty 令牌的实际取值。display-p3 原样保留 —— 转成 sRGB 十六进制会失真。
-  surface: "color(display-p3 1 1 1)" # --t-background-primary
-  canvas: "color(display-p3 0.988 0.988 0.988)" # --t-background-secondary
-  sunken: "color(display-p3 0.945 0.945 0.945)" # --t-background-tertiary
-  text: "color(display-p3 0.2 0.2 0.2)" # --t-font-color-primary
-  text-muted: "color(display-p3 0.4 0.4 0.4)" # --t-font-color-secondary
-  text-subtle: "color(display-p3 0.6 0.6 0.6)" # --t-font-color-tertiary
-  accent: "color(display-p3 0.276 0.384 0.837)" # --t-color-blue9
-  success: "color(display-p3 0.19 0.5 0.32)" # --t-color-green11
-  warning: "color(display-p3 0.76 0.34 0)" # --t-color-orange11
-  danger: "color(display-p3 0.83 0.329 0.324)" # --t-font-color-danger / --t-color-red9
-  tint-blue: "#0047f112" # 7% 蓝，用于选中与信息底
-  tint-success: "#00a43319" # 10% 绿
-  tint-orange: "#ff9c0029" # 16% 橙
-  tint-danger: "#f3000d14" # 8% 红
+  # 浅色取值，来自 src/styles/beszel.css 的 --od-*；深色值见同文件 .dark 块。
+  surface: "hsl(30 0% 100%)" # --od-card，卡片与面板
+  canvas: "hsl(30 8% 98%)" # --od-background，页面底色（暖灰）
+  sunken: "hsl(26 6% 94%)" # --od-muted，卡内凹陷面
+  text: "hsl(30 0% 10%)" # --od-foreground
+  text-muted: "hsl(24 2.79% 35.1%)" # --od-secondary-foreground
+  text-subtle: "hsl(24 3.5% 46%)" # --od-tertiary-foreground
+  action: "hsl(240 5.88% 10%)" # --od-primary，近乎黑的主操作，不挂品牌色
+  success: "hsl(140 52% 32%)" # --od-success
+  warning: "hsl(37 92% 31%)" # --od-warning
+  danger: "hsl(0 66% 43%)" # --od-danger
+  border: "hsl(30 8.11% 85.49%)" # --od-border，1px 描边
+  tint-success: "hsl(140 50% 92%)" # --od-success-surface
+  tint-warning: "hsl(46 92% 90%)" # --od-warning-surface
+  tint-danger: "hsl(0 72% 95%)" # --od-danger-surface
 
 typography:
-  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
+  fontFamily: "'InterVariable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
   fontFamily-mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
   base: 14px
   lineHeight: 1.5
   weights: "400, 500, 600" # 仅三档，见「已知技术债」
 
 rounded:
-  xs: 2px # --t-border-radius-xs
-  sm: 4px
-  md: 8px # 卡片、按钮、输入框的默认值
-  lg: 16px # 仅用于模态与终端面板
+  xs: 4px # 徽标、标签
+  sm: 8.8px # 小控件
+  md: 10.8px # 按钮、输入框的默认值
+  lg: 12.8px # 卡片、面板（--od-radius: 0.8rem）
+  xl: 16.8px # 模态
 
 spacing:
   unit: 4px
@@ -60,43 +61,48 @@ OpsDeck 是服务器与容器的运维控制台。它的用户是在凌晨两点
 
 ## 设计来源
 
-设计令牌**原样取自 Twenty**（`src/styles/twenty-light.css` / `twenty-dark.css`），
-未做任何改动。理由：Twenty 的令牌体系已经过一套成熟 CRM 的验证，
-自建一套同水平的语义色阶成本远高于继承。
+视觉语言取自 **Beszel**（`src/styles/beszel.css` 的 `--od-*`）：
+暖灰画布、白色面板、1px 细描边、0.8rem 卡片圆角、Inter 字体，
+以及**单色反转**的主操作 —— 近黑按钮配白字，深色主题反过来。
+理由：Beszel 面对同一类使用者（盯着服务器指标的人），它的表面关系天然安静、高密度，
+状态色只在需要时出现，比通用 CRM 的紫色品牌层更贴近运维台。
 
-`src/styles/theme-bridge.css` 只做一件事——把 `--t-*` 变量映射成 Tailwind 工具类，
-让组件里可以写 `bg-primary`、`text-ink-tertiary`，而不必记住前缀。
+Twenty 的令牌文件仍然保留，但**只负责 `.light` / `.dark` 作用域与动效时长**，
+组件颜色不再从 `--t-*` 读取。HeroUI 的组件样式已移除（CSS 产物 636.59 kB → 约 215 kB），
+交互与结构全部由项目自有原语承担。
 
 ```
-twenty-light.css / twenty-dark.css   ← 原始令牌，不改
+beszel.css (--od-*) + twenty-light|dark（仅作用域/时长）
         ↓
-theme-bridge.css (@theme inline)      ← 映射为工具类
+theme-bridge.css (@theme inline)      ← 映射为 bg-primary / text-ink-tertiary 等工具类
         ↓
 ui.tsx / table.tsx / icons.tsx        ← 共享原语，组件内不写死颜色
         ↓
 panels/*.tsx / App.tsx                ← 业务界面
 ```
 
-**硬性约束：组件里不允许出现硬编码颜色。** 深浅色完全由 `.light` / `.dark`
-作用域的变量切换。写死任何一个十六进制值，深色模式就会崩。
+**硬性约束：组件里不允许出现硬编码颜色。** 深浅色完全由
+`html[data-theme]` 下的变量切换。写死任何一个十六进制值，深色模式就会崩。
+图表线与终端底色是刻意的例外，集中定义在 `index.css` 和终端组件里。
 
 ## 色彩
 
 ### 层级
 
-三层背景，靠明度差而非边框来区分层次：
+Beszel 的表面关系**不靠大跨度明度**，而靠"暖灰画布 + 白色面板 + 1px 描边"：
 
 | 令牌 | 工具类 | 用途 |
 |------|--------|------|
-| `--t-background-primary` | `bg-primary` | 卡片、表格、侧边栏——所有"浮在页面上"的内容 |
-| `--t-background-secondary` | `bg-secondary` | 卡内的浅色底：输入框、代码块、次级区块 |
-| `--t-background-tertiary` | `bg-tertiary` | 页面底色 |
+| `--od-card` | `bg-primary` | 卡片、表格、弹层——所有"浮在页面上"的内容 |
+| `--od-background` | `bg-tertiary` / `bg-background` | 页面底色与吸顶页头（两者必须同值） |
+| `--od-secondary` | `bg-secondary` | 输入框、次级区块、代码底 |
+| `--od-muted` | `bg-sunken` | 卡内凹陷面：图标底、分段控件槽 |
 
-**页面底色必须是 `tertiary`，不是 `secondary`。**
-`secondary`(0.988) 与卡片的 `primary`(1.000) 只差 1.2%，白卡片浮在白底上等于没有层级 ——
-整页糊成一张纸，只能靠 0.5px 描边勉强分辨。`tertiary`(0.945) 与 `primary` 差 5.5%，
-卡片自然"浮"起来。这一条改动的观感收益比任何圆角、阴影都大。
-深色主题下两者关系相反（页面比卡片亮），但差值同样成立，卡片仍是靠描边收口的。
+浅色下页面 `hsl(30 8% 98%)` 与卡片纯白只差约 2%，但**色相偏暖**
+加上 `border-line` 的 1px 描边和 `shadow-xs`，卡片仍然清楚浮起；
+深色下页面 `hsl(220 5.5% 9%)`、卡片 `10.5%`，差值同样很小，靠描边收口。
+这是 Beszel 的刻意选择：整页保持安静，让状态色成为唯一的注意力来源。
+**不要**为了"层次更明显"擅自把页面压暗或给卡片加更重的阴影。
 
 ### 文字
 
@@ -115,48 +121,67 @@ panels/*.tsx / App.tsx                ← 业务界面
 | 语义 | 文字色 | 底色 | 使用场景 |
 |------|--------|------|----------|
 | 正常 | `text-ink-success` | `bg-tint-success` | 在线、运行中 |
-| 注意 | `text-ink-warning` | `bg-tint-orange` | 阈值 70–85%、未运行容器 |
-| 危险 | `text-ink-danger` | `bg-tint-danger` | 离线、故障、未读告警 |
-| 品牌 | `text-accent` | `bg-tint-blue` | 选中态、可交互元素 |
+| 注意 | `text-ink-warning` | `bg-tint-warning` | 阈值 70–85%、不健康容器 |
+| 危险 | `text-ink-danger` | `bg-tint-danger` | 离线、故障、已停止、未读告警 |
+| 主操作 | `text-on-accent` | `bg-accent` | 提交、部署、登录——近黑/近白反转 |
+| 选中 | `text-ink` | `bg-accent-soft` | 导航选中、行 hover、信息底 |
 
-**三条规则：**
+**四条规则：**
 
-1. **只有需要处理的指标才给数值上色。** 正常值用 `text-ink-secondary` 保持安静，
+1. **品牌色不存在。** `accent` 已被重定义为 `--od-primary`（单色反转），
+   `tint-blue` 映射到暖中性色 `--od-accent-surface`。选中态不再用蓝色，
+   彩色只留给状态和图表。旧代码里的 `bg-tint-blue` / `text-accent` 不会报错，
+   但观感已是中性——新代码请优先用 `bg-accent-soft` / `text-ink`。
+2. **只有需要处理的指标才给数值上色。** 正常值用 `text-ink-secondary` 保持安静，
    只有跨过 70% / 85% 阈值的那一项才染成语义色。
    判断标准是"这个数字是否需要人现在动手"，而不是"这个指标属于哪一类"。
    一排卡片各挂一种颜色的图标底，读起来像彩纸屑，真正要处理的告警反而不突出。
-2. **颜色必须配一个形状信号。** 严重度同时用图标（三角 / 八角）和颜色；
-   侧边栏选中态同时用浅底和左侧 2px 指示条。色觉障碍用户不应丢失任何信息。
-3. **底色是 7–16% 透明度，不是实色。** 实色底会把文字压死；
-   半透明底在深浅两种主题下都能自动适配。
+3. **颜色必须配一个形状信号。** 严重度同时用图标（三角 / 八角）和颜色；
+   选中态同时用浅底和左侧 2px 指示条。色觉障碍用户不应丢失任何信息。
+4. **浅底是实色的低饱和 surface，不是透明度叠加。**
+   `--od-success-surface` / `-warning-surface` / `-danger-surface` 各自为深浅主题
+   定义了独立取值，比在文字色上盖 alpha 更容易保证对比度。
 
-**阈值分档（`≥85%` 危险 / `≥70%` 注意 / 其余正常）目前有两个定义点**：
-`App.tsx` 的 `levelOf()`（看板，配套的 `HEALTH` 常量把同一档位的
-**点色 / 文字色 / 条色 / 整行底色**绑在一起 —— 同一状态在页面上会出现三次，
-颜色必须同源）和 `ServersPanel` 的 `MiniMeter`（只关心颜色，不涉及行底）。
-**改阈值时两处都要改。** 只有两个调用点，暂时不值得为它抽一个公共模块。
+**阈值与健康分档只有一处定义：`src/health.ts`。**
+`levelOf()`（`≥85%` 危险 / `≥70%` 注意 / 其余正常）、`HEALTH` 的
+点色 / 文字色 / 条色、`HEALTH_LABEL`、`HEALTH_RANK` 都从这里导出，
+看板、服务器列表、容器页共用。**改阈值只改这个文件**；
+如果发现某处又手写了 70 / 85，应把它收敛回来。
 
 ## 字体与字号
 
-基础字号 14px / 行高 1.5。字体栈优先系统中文字体，不加载 Web Font——
-运维控制台不该为了字形等待网络。
+基础字号 14px / 行高 1.5。
+
+**西文与数字用 InterVariable，本地打包**（`public/fonts/InterVariable.woff2`，
+`font-display: swap`），中文落到系统字体 PingFang SC / Microsoft YaHei。
+理由：Inter 的大写高度和数字宽度稳定，表格纵向比对时更整齐；
+`font-variant-ligatures: no-contextual` 防止 `->` 之类被连字，
+`.tnum` 给指标数字开等宽数字。本地字体不产生网络等待，
+与 Beszel 使用同一份字体文件。
 
 字重**只用三档**：400 正文、500 强调与标签、600 数值与标题。
 
-> ⚠️ 字号刻度见「已知技术债」，目前存在碎档。
+> ⚠️ 字号刻度见「已知技术债」，目前仍存在碎档。
 
 ## 间距与圆角
 
 4px 基准。组件内部用 8 / 12 / 16px，区块之间用 1rem / 1.25rem / 1.5rem。
 
-圆角默认 `rounded-md`（8px）——卡片、容器、表格用这一档。
+圆角以 Beszel 的 `--od-radius: 0.8rem`（12.8px）为基准：
 
-`rounded-lg`（16px）用于**交互控件**：表单输入框、面板内的一级按钮、
-聊天气泡、代码块。这类元素比卡片"软"一档，视觉上更容易被识别为可操作。
+| 工具类 | 实际值 | 用途 |
+|--------|--------|------|
+| `rounded-lg` | 12.8px | 卡片、面板、弹层 |
+| `rounded-md` | 10.8px | 按钮、输入框、小控件 |
+| `rounded-sm` | 8.8px | 标签、行内小块 |
+| `rounded-xs` | 4px | 徽标、状态胶囊 |
+| `rounded-xl` | 16.8px | 模态 |
 
-> ⚠️ 这个划分并未被严格遵守：`ui.tsx` 的 `PrimaryButton` 用的是 `rounded-sm`（4px），
-> 而面板里手写的一级按钮用 `rounded-lg`（16px）。同一个视觉角色有两套规格，
-> 详见「已知技术债」。
+**卡片比控件只大 2px。** Beszel 的层级不靠大圆角区分卡片与按钮，
+而是靠描边和底色；不要再回到"卡片 16px、按钮 4px"那种两套刻度。
+
+> ⚠️ 一级按钮仍未完全统一：`PrimaryButton` 是 10.8px / 12px 字号 / 32px 高，
+> 面板里手写的按钮多为 12.8px / 13px / 36px。详见「已知技术债」。
 
 ## 动效
 
@@ -234,23 +259,34 @@ panels/*.tsx / App.tsx                ← 业务界面
 一台超时不该清空另一台的曲线。依赖用排序后的 id 串而不是 `servers` 数组，
 否则 15 秒一次的告警轮询会把历史请求也带成 15 秒一次（N+1 放大）。
 
-### 容器状态：固定关注带 + 全量表格
+### 容器状态：首页只回答"哪里有事"
 
-上一版为了控高只留「异常 + 内存 Top 5」，结果看不到容器全貌。现在把容器卡移到
-**左侧更宽的列**（≥1360px 时约占 56% 宽），并恢复完整列表：
+首页不再铺全量容器表格——那是「容器」页的工作。卡片移到**左侧更宽的列**
+（≥1360px 时约占 56% 宽），只保留三层信息：
 
-- **需要关注是固定带，没有折叠/关闭入口。** 最多并排 2 个异常容器；再多收口成
-  「还有 N 个，去容器页查看」。
-- **搜索 + 状态筛选**（全部 / 需关注 / 运行中 / 已完成）在表格上方；筛选计数与
-  分布条同源，不重复维护两套数字。
-- **完整表格**：状态 / 容器 / 项目 / 服务器 / 内存，行高 32px；默认按
-  「不健康 → 已停止 → 运行中 → 已完成」排序，异常永远在最前；卡片固定高度，
-  表格内部滚动。
-- **窄屏逐级摘列**：<sm 只留状态/容器/内存，sm 加项目，lg 加服务器。
-  摘列时表头与单元格同时摘，避免错位。
+- **头部**：容器状态 + 需关注徽标（或"运行正常"）+ `N 台服务器 · M 个容器`
+  + 「查看全部容器」。
+- **状态分布**：一条按数量分段的横条，下方四格图例
+  （运行中 / 不健康 / 已停止 / 已完成）带计数；分段与图例同源。
+- **需关注的容器**：固定区，最多 5 条。每行是容器名、服务器 · 项目、状态、内存；
+  整行可点，跳到容器页。没有异常时用绿色对勾收口，
+  异常不足 5 条时页脚补一句「其余 N 个容器运行正常」。
 
-容器卡固定 30.5rem 高，与右侧趋势卡对齐；完整表格因此不会把页面拉长。
-「容器」页仍然负责日志、排序、镜像这些深度排查动作。
+**卡片按内容收口，不再与趋势卡强制等高。** 栅格是
+`min-[1360px]:grid-cols-[1.3fr_1fr]` + `items-start`；摘要卡不会为了对齐
+被拉出一块画着边框的空白。搜索、分组折叠、日志、重启/停止/编辑等深度动作
+全部留在容器页。
+
+### 容器页：主从工作台
+
+- ≥xl 时左侧 22rem 固定列表、右侧详情/日志，整页高度锁定在视口内；
+  窄屏按"列表 → 详情"上下排列。
+- 列表按服务器分组；**有异常的分组默认展开，正常分组默认折叠**，
+  搜索或筛选时全部展开。分组头显示服务器名、容器数、异常数。
+- 列表顶部是搜索 + 状态筛选；行内显示状态点、容器名、项目/镜像、内存与健康状态，
+  异常行加左侧 2px 色条。
+- 选中容器后右侧展示完整镜像、端口、启动时间、内存限制、项目级操作与日志；
+  日志默认最近 200 行，可切换实时跟随。管理员才可见日志入口。
 
 ### 告警从看板搬进了页头铃铛
 
@@ -317,7 +353,7 @@ panels/*.tsx / App.tsx                ← 业务界面
 数量这类摘要通过 `useHeaderMeta('1 台')` 挂到页头右侧。
 
 **2. 表格行高 32px，单元格内边距 8px。**
-这套规格是 Twenty 看起来专业的关键，不要为了"呼吸感"随意加大。
+这套规格是高密度界面看起来专业的关键，不要为了"呼吸感"随意加大。
 
 **3. `DataTable` 已经是 `table-fixed`，每张表都要给显式列宽。**
 留**恰好一列**不写宽度，让它吃掉剩余空间；其余列都写死。
@@ -399,22 +435,22 @@ panels/*.tsx / App.tsx                ← 业务界面
 
 ### 1. 字号刻度存在碎档（优先级：中）
 
-实测代码中出现了 **11 种字号**：
-`10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 15 / 19 / 22 / 26 px`
+实测代码中出现了 **18 种字号**：
+`9 / 9.5 / 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 13.5 / 14 / 15 / 18 / 22 / 23 / 24 / 25 / 26 px`
 
-其中 `10.5 / 11.5 / 12.5` 三个 0.5px 档是逐次手调留下的痕迹，
+其中 `9.5 / 10.5 / 11.5 / 12.5 / 13.5` 这几个 0.5px 档是逐次手调留下的痕迹，
 不是刻意的设计决策——人眼分辨不出 0.5px 差异，但维护者会困惑该用哪个。
 
-**建议**收敛为 6 档：
+**建议**收敛为 7 档：
 
 | 用途 | 现值 | 建议 |
 |------|------|------|
-| 微标签（分组标题） | 10 / 10.5 | 11 |
-| 辅助文字（时间、单位、提示） | 11 / 11.5 | 12 |
-| 次要正文 | 12 / 12.5 | 13 |
-| 正文 | 13 | 13 |
+| 微标签（分组标题、密集徽标） | 9 – 10.5 | 10.5 |
+| 辅助文字（时间、单位、提示） | 11 / 11.5 | 11.5 |
+| 次要正文 | 12 / 12.5 | 12.5 |
+| 正文 | 13 / 13.5 / 14 | 13 |
 | 强调/小标题 | 15 | 15 |
-| 页面标题 | 19 | 20 |
+| 页面标题 | 18 / 23 / 24 / 25 | 24 |
 | 大数值 | 22 / 26 | 26 |
 
 ### 2. 一级按钮有两套互相冲突的规格（优先级：中）
@@ -423,12 +459,12 @@ panels/*.tsx / App.tsx                ← 业务界面
 
 | 实现 | 圆角 | 字号 | 高度 | 出现在 |
 |------|------|------|------|--------|
-| `ui.tsx` 的 `PrimaryButton` | 4px | 12px | 28px | 看板、部分面板 |
-| 面板内手写的 `<button>` | 16px | 13px | ~36px | LoginPage、UsersPanel、DifyPanel、RemoteTerminalDialog |
+| `ui.tsx` 的 `PrimaryButton` | 10.8px | 12px | 32px | 看板、部分面板 |
+| 面板内手写的 `<button>` | 12.8px | 13px | ~36px | LoginPage、UsersPanel、DifyPanel、ChatPanel、ProjectWorkspaceDialog |
 
-用户会在同一个应用里看到两种大小和圆角的"确定"按钮。
-**建议**：统一走 `PrimaryButton`，把它的规格调整为 16px 圆角 / 13px 字号 / 32px 高度，
-然后把面板里的手写按钮替换掉。
+换肤后圆角差距从 12px 缩到 2px，观感冲突已明显减弱；但字号与高度仍是两套。
+**建议**：统一走 `PrimaryButton`，把它的规格调整为 13px 字号 / 36px 高度
+（圆角保持 10.8px），然后把面板里的手写按钮替换掉。
 
 ### 3. 项目页缺筛选与排序（优先级：中）
 
@@ -452,6 +488,15 @@ panels/*.tsx / App.tsx                ← 业务界面
 
 ### 已修复
 
+- **整体换成 Beszel 的视觉语言**（2026-10-21 修复）。
+  原先令牌继承 Twenty（冷灰、蓝色品牌层、8px 圆角、系统字体），页面虽整齐，
+  但和同场景的 Beszel 摆在一起明显是两套气质。现在改为
+  **暖灰画布 + 白色面板 + 1px 描边 + 0.8rem 圆角 + InterVariable + 单色反转主操作**，
+  状态色只保留绿/黄/红三档低饱和 surface。同时移除了 HeroUI 的组件样式表
+  （CSS 636.59 kB → 约 215 kB），交互与结构全部由自有原语承担。
+  容器页列表列 20rem → 22rem，首页容器卡改为内容高度，不再与趋势卡强制等高；
+  AI 聊天挂件也改为消费 `--od-*`，随主题切换，不再是独立的亮蓝面板。
+
 - **看板首屏没有结论，只有一堆等重的数字**（2026-10-14 修复）。
   五张等宽统计卡 + 四张内容卡，共九张同尺寸、同白底、同描边的卡片平铺在页面上，
   没有任何一张比别的更值得先看 —— 读起来"平、灰、没设计感"的第二个根因
@@ -470,6 +515,7 @@ panels/*.tsx / App.tsx                ← 业务界面
   改成 `bg-tertiary`(0.945)，卡片与页面拉开 5.5% 明度差，卡片自然浮起来。
   涉及 `index.css` 的 `body`、`App.tsx` 的根容器与吸顶页头（三处必须同步改，
   否则页头会变成一条比页面更亮的横带）。
+  （2026-10-21 起层级改为 Beszel 的暖灰画布 + 1px 描边，见首条；三处同步的约束不变。）
 
 - **告警只在首页可见**（2026-10-15 修复）。
   全宽横幅 + 底部「事件与告警」卡片都长在 Dashboard 里，换个页签就看不到未读数。
@@ -529,8 +575,14 @@ panels/*.tsx / App.tsx                ← 业务界面
 
 ## 维护指南
 
-**改配色**：只改 `twenty-light.css` / `twenty-dark.css` 里的 `--t-*` 变量，
-两套主题必须同步改，否则必然出现某一主题下对比度不足。
+**改配色 / 圆角**：只改 `src/styles/beszel.css` 的 `--od-*` 变量
+（含 `--od-radius`）；`.dark` 块必须与 `:root` 同步改，否则必然出现某一主题下
+对比度不足。`twenty-light.css` / `twenty-dark.css` 现在只提供主题作用域与动效时长，
+**不要再往那里加颜色**；`theme-bridge.css` 负责把令牌映射成工具类。
+
+**改字体**：InterVariable 文件在 `public/fonts/`，字体栈同时出现在
+`index.css` 的 `body` 与 `theme-bridge.css` 的 `--font-sans`，两处要一致。
+中文不要额外加载 Web Font，交给系统字体。
 
 **加新组件**：放进 `ui.tsx`，用语义工具类，不要写死颜色。
 如果它需要出现在多个面板，先确认是否该由 `PageHeader` 承担标题。

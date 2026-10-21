@@ -978,7 +978,7 @@ function UpdateDetailDialog({
 
           {notes ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium tracking-wider text-ink-tertiary uppercase">
+              <div className="mb-1 text-[10.5px] font-medium text-ink-tertiary">
                 Release Notes
               </div>
               <pre className="mono max-h-52 overflow-auto rounded-md bg-secondary p-3 text-[11px] whitespace-pre-wrap text-ink-secondary">
@@ -1041,7 +1041,7 @@ function UpdateDetailDialog({
 
           {result?.output ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium tracking-wider text-ink-tertiary uppercase">输出</div>
+              <div className="mb-1 text-[10.5px] font-medium text-ink-tertiary">输出</div>
               <pre className="mono max-h-60 overflow-auto rounded-md bg-secondary p-3 text-[11px] whitespace-pre-wrap">
                 {result.output}
               </pre>

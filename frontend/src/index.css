@@ -3,11 +3,11 @@
  *
  * 三层结构:
  *   1. Tailwind v4
- *   2. Twenty 的设计令牌(色阶、间距、圆角、动效时长)
- *   3. HeroUI 的组件样式
+ *   2. Twenty 的令牌文件(仅为主题类作用域与动效时长保留)
+ *   3. OpsDeck 的 Beszel 语义令牌(颜色、圆角、阴影的真实来源)
  *
- * 组件观感以 Twenty 的令牌为准,HeroUI 只提供交互与结构,
- * 因此 bridge 层把 `--t-*` 变量映射成 Tailwind 工具类。
+ * 组件一律使用语义工具类(bg-primary / text-ink / border-line),
+ * 由 theme-bridge.css 映射到 --od-* 令牌,不再直接消费 Twenty 的色阶。
  */
 
 @import 'tailwindcss';
@@ -19,8 +19,20 @@
 /* 把 Twenty 变量映射为 Tailwind 工具类 */
 @import './styles/theme-bridge.css';
 
-/* HeroUI 组件样式 */
-@import '@heroui/react/styles';
+/* Beszel 令牌:暖灰画布、白色面板、0.8rem 圆角 */
+@import './styles/beszel.css';
+
+/*
+ * InterVariable:与 Beszel 同一份 4.0 字体文件,本地打包。
+ * 中文仍落到系统字体,Inter 只接管西文、数字和符号。
+ */
+@font-face {
+  font-family: 'InterVariable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable.woff2') format('woff2');
+}
 
 /*
  * 主题切换。
@@ -30,6 +42,7 @@
  */
 html {
   color-scheme: light dark;
+  scrollbar-gutter: stable;
 }
 
 html[data-theme='light'] {
@@ -65,18 +78,18 @@ html {
 @layer base {
   body {
     /*
-     * 页面底色用 tertiary(#F1F1F1)而不是 secondary(#FCFCFC)。
+     * 页面底色用 tertiary(暖白画布)而不是卡片白。
      *
-     * secondary 与卡片的 primary(#FFFFFF)只差 1.2%,白卡片浮在白底上等于没有层级 ——
-     * 整页糊成一张纸,只能靠 0.5px 的描边勉强分辨。换到 tertiary 之后
-     * 卡片自然"浮"起来,页面立刻有了图形/背景的关系。
+     * Beszel 的层级靠"暖灰画布 + 纯白卡片 + 1px 描边"建立;
+     * 两者一旦同色,整页糊成一张纸,只能靠阴影勉强分辨。
      */
     @apply bg-tertiary text-ink antialiased;
     font-family:
-      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
-      sans-serif;
+      'InterVariable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+      'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
     font-size: 14px;
     line-height: 1.5;
+    font-variant-ligatures: no-contextual;
   }
 
   /* 数字等宽:指标纵向比对时对齐 */
@@ -90,8 +103,8 @@ html {
 
   /* 键盘焦点必须可见 —— 可访问性要求 */
   :focus-visible {
-    outline: 2px solid var(--t-color-blue9);
-    outline-offset: 1px;
+    outline: 2px solid var(--od-ring);
+    outline-offset: 2px;
   }
 }
 
@@ -99,7 +112,7 @@ html {
   /* 滚动条跟随主题 */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--t-font-color-tertiary) transparent;
+    scrollbar-color: var(--od-tertiary-foreground) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -108,7 +121,7 @@ html {
   }
 
   *::-webkit-scrollbar-thumb {
-    background: var(--t-background-transparent-strong);
+    background: var(--od-input);
     border-radius: 4px;
   }
 

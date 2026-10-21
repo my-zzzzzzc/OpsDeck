@@ -3,12 +3,12 @@ import type { ReactNode } from 'react'
 /*
  * 紧凑数据表。
  *
- * 结构用原生语义标签(便于无障碍与键盘导航),视觉规格取自 Twenty:
- *   - 行高 32px(spacing[8]),表头同高
- *   - 单元格内边距 0 8px(spacing[2])
- *   - 表头字体 tertiary + medium,底边框 light
+ * 结构用原生语义标签(便于无障碍与键盘导航),视觉规格来自 Beszel:
+ *   - 行高 32px,表头同高
+ *   - 表头用独立的浅色表面,滚动时列名始终可见
+ *   - 行 hover 用暖灰 accent 面,而不是描边
  *
- * 这套规格让信息密度比"卡片式"布局高一倍以上,是 Twenty 看起来专业的关键。
+ * 这套规格让信息密度比"卡片式"布局高一倍以上。
  */
 
 /**
@@ -48,7 +48,7 @@ export function TH({
     <th
       scope="col"
       style={width ? { width } : undefined}
-      className="h-8 border-b border-line px-2 text-left align-middle text-[11px] font-medium whitespace-nowrap text-ink-tertiary"
+      className="h-8 border-b border-line bg-table-header px-2 text-left align-middle text-[11px] font-medium whitespace-nowrap text-ink-tertiary"
     >
       <span className={`flex items-center gap-1 ${justify}`}>{children}</span>
     </th>
@@ -77,7 +77,7 @@ export function TR({
     <tr
       onClick={onClick}
       className={`h-8 max-h-8 border-b border-line transition-colors duration-100 last:border-b-0
-        ${onClick ? 'cursor-pointer hover:bg-overlay-lighter' : 'hover:bg-overlay-lighter'}
+        ${onClick ? 'cursor-pointer hover:bg-accent-soft' : 'hover:bg-accent-soft'}
         ${dimmed ? 'opacity-45' : ''}`}
     >
       {children}

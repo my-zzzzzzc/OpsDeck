@@ -56,17 +56,17 @@ type Tone = 'ok' | 'warn' | 'bad'
 
 const STATUS_TONE: Record<Tone, { accent: string; orb: string; icon: ReactNode }> = {
   ok: {
-    accent: 'bg-ink-success',
+    accent: 'bg-status-ok',
     orb: 'bg-tint-success text-ink-success',
     icon: <IconCheck size={20} />,
   },
   warn: {
-    accent: 'bg-ink-warning',
-    orb: 'bg-tint-orange text-ink-warning',
+    accent: 'bg-status-warn',
+    orb: 'bg-tint-warning text-ink-warning',
     icon: <IconAlert size={20} />,
   },
   bad: {
-    accent: 'bg-ink-danger',
+    accent: 'bg-status-bad',
     orb: 'bg-tint-danger text-ink-danger',
     icon: <IconAlertOctagon size={20} />,
   },
@@ -367,7 +367,7 @@ export function DashboardHero({
                 {status.icon}
               </span>
               <div className="min-w-0">
-                <div className="text-[10px] font-medium tracking-[0.14em] text-ink-tertiary uppercase">
+                <div className="text-[10.5px] font-medium text-ink-tertiary">
                   OpsDeck 部署节点
                 </div>
                 <h2 className="mt-1 text-[23px] leading-tight font-semibold tracking-tight text-ink">
@@ -495,7 +495,7 @@ export function TrendCard({
   const isPercent = active.key !== 'load'
 
   return (
-    <Card padded={false} className="flex h-full flex-col overflow-hidden">
+    <Card padded={false} className="flex flex-col overflow-hidden">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-line px-3.5 py-2.5">
         <IconActivity size={14} className="shrink-0 text-ink-tertiary" />
         <h2 className="text-[12.5px] font-semibold text-ink">资源趋势</h2>

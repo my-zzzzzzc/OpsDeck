@@ -62,11 +62,11 @@ function NavRow({
       title={item.description}
       className={`${ITEM_CLS} ${
         active
-          ? 'bg-tint-blue font-medium text-accent'
-          : 'text-ink-secondary hover:bg-overlay-light hover:text-ink'
+          ? 'bg-secondary font-medium text-ink'
+          : 'text-ink-secondary hover:bg-accent-soft hover:text-ink'
       }`}
     >
-      <span className={active ? 'shrink-0 text-accent' : 'shrink-0 text-ink-tertiary'}>
+      <span className={active ? 'shrink-0 text-ink' : 'shrink-0 text-ink-tertiary'}>
         <Icon size={15} />
       </span>
       <span className="truncate">{item.label}</span>
