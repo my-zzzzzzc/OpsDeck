@@ -41,8 +41,25 @@ export interface Project {
   update_source: 'git' | 'release' | 'registry' | 'manual' | null
   update_status: 'unknown' | 'up_to_date' | 'update_available' | 'check_failed' | 'manual' | null
   update_branch: string | null
+  /** 托管状态。discovered/ignored 是只读资产，不参与部署、更新、操作与告警。 */
+  lifecycle: ProjectLifecycle
+  /** Compose 项目标签，稳定的自动发现匹配键。 */
+  compose_project: string | null
+  last_seen_at: string | null
+  container_count: number | null
   created_at: string
   updated_at: string
+}
+
+export type ProjectLifecycle = 'managed' | 'discovered' | 'ignored'
+
+/** 接管请求。只登记，不执行任何远端命令。 */
+export interface AdoptProjectPayload {
+  name?: string
+  work_dir: string
+  compose_file: string
+  url?: string | null
+  note?: string | null
 }
 
 export interface ProjectConfig {
@@ -77,6 +94,19 @@ export interface Metric {
   load_15: number | null
 }
 
+/** 容器指标快照。速率单位为字节/秒，CPU 为整机占比。 */
+export interface ContainerMetricPoint {
+  id: number
+  instance_id: number
+  captured_at: string
+  cpu_percent: number | null
+  mem_used_mb: number | null
+  net_rx_bps: number | null
+  net_tx_bps: number | null
+  block_read_bps: number | null
+  block_write_bps: number | null
+}
+
 export interface Instance {
   id: number
   project_id: string
@@ -99,9 +129,29 @@ export interface InstanceDetail extends Instance {
   project_name: string | null
   server_id: string | null
   server_name: string | null
+  /** 镜像 registry digest；本地构建的镜像没有该值。 */
+  image_digest: string | null
+  /** 最近一次健康检查输出，仅不健康时展示。 */
+  health_detail: string | null
+  /** Docker Compose 一次性任务标签（docker compose run）。 */
+  one_off: boolean
   /** 当前采集器可能尚未上报，缺失时前端展示为「—」。 */
   started_at: string | null
   exit_code: number | null
+  /** 崩溃排障：重启次数、OOM 终止标记、最近一次退出时间。 */
+  restart_count: number | null
+  oom_killed: boolean | null
+  finished_at: string | null
+  ports: Array<{ host?: number; container?: number; proto?: string }> | null
+  mounts: Array<{
+    type: string
+    name?: string
+    source: string
+    destination: string
+    readonly: boolean
+  }> | null
+  env_keys: string[] | null
+  restart_policy: string | null
 }
 
 export interface EventItem {
@@ -400,8 +450,18 @@ export const api = {
     ),
   updateServer: (id: string, body: Record<string, unknown>) =>
     request<Server>(`/servers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  projects: (serverId?: string) =>
-    request<Project[]>(`/projects${serverId ? `?server_id=${serverId}` : ''}`),
+  projects: (serverId?: string, lifecycle: ProjectLifecycle = 'managed') => {
+    const params = new URLSearchParams({ lifecycle })
+    if (serverId) params.set('server_id', serverId)
+    return request<Project[]>(`/projects?${params.toString()}`)
+  },
+  /** 接管未托管项目：只登记资产，不执行任何远端命令。 */
+  adoptProject: (id: string, body: AdoptProjectPayload) =>
+    request<Project>(`/projects/${id}/adopt`, { method: 'POST', body: JSON.stringify(body) }),
+  ignoreProject: (id: string) =>
+    request<Project>(`/projects/${id}/ignore`, { method: 'POST' }),
+  restoreProject: (id: string) =>
+    request<Project>(`/projects/${id}/restore`, { method: 'POST' }),
 
   // 部署
   deployPreflight: (body: DeployPreflightPayload) =>
@@ -437,6 +497,9 @@ export const api = {
   /** 容器实例,带项目名与服务器名,供跨机器汇总的容器看板使用。 */
   instancesDetail: (serverId?: string) =>
     request<InstanceDetail[]>(`/instances/detail${serverId ? `?server_id=${serverId}` : ''}`),
+  /** 单个容器的资源趋势;空桶由后端返回 null,前端画成缺口。 */
+  containerMetrics: (instanceId: number, hours = 1, points = 60) =>
+    request<ContainerMetricPoint[]>(`/instances/${instanceId}/metrics?hours=${hours}&points=${points}`),
   events: (limit = 50) => request<EventItem[]>(`/events?limit=${limit}`),
   ackEvent: (id: number) => request<EventItem>(`/events/${id}/ack`, { method: 'POST' }),
   /** 一次性把所有未读事件标记为已处理,返回处理条数。 */
@@ -457,6 +520,12 @@ export const api = {
   executeAction: (body: { project_id: string; action: string; confirm?: boolean }) =>
     request<ActionLogItem>('/actions/execute', { method: 'POST', body: JSON.stringify(body) }),
   actionLogs: (limit = 50, projectId?: string) => request<ActionLogItem[]>(`/actions/logs?limit=${limit}${projectId ? `&project_id=${projectId}` : ''}`),
+  // 单容器操作：只影响这一个容器
+  containerAction: (instanceId: number, action: string, confirm = false) =>
+    request<ActionLogItem>(`/containers/${instanceId}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ action, confirm }),
+    }),
 
   // 更新
   updates: () => request<UpdateProject[]>('/updates'),

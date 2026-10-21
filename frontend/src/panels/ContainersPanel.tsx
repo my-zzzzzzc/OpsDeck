@@ -1,39 +1,44 @@
 import {
+  Activity,
   AlertTriangle,
   Boxes,
+  ChevronDown,
   ChevronRight,
   CircleSlash,
   FolderOpen,
   Pencil,
   Play,
   RotateCcw,
-  ScrollText,
   Search,
   Server as ServerIcon,
+  Settings2,
   Square,
+  Terminal,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import { api, DANGER_LABEL, type ActionCatalogItem, type InstanceDetail, type Project, type Server, type User } from '../api'
+import {
+  api,
+  DANGER_LABEL,
+  type ActionCatalogItem,
+  type InstanceDetail,
+  type Project,
+  type Server,
+  type UpdateConfig,
+  type User,
+} from '../api'
 import { cn } from '../cn'
+import { bucketOf, isOneShot, type ContainerBucket } from '../ContainerBoard'
+import { portLabel, restartPolicyLabel } from '../container-runtime'
 import { PageSkeleton } from '../motion'
-import { Card } from '../ui'
-import { ContainerLogPanel } from './ContainerLogDrawer'
-import { ProjectLogDialog } from './ProjectLogDialog'
+import { Badge, Card } from '../ui'
+import { ContainerLogDialog } from './ContainerLogDialog'
+import { ContainerTrendDialog } from './ContainerTrendDialog'
 import { ProjectWorkspaceDialog } from './ProjectWorkspaceDialog'
 
-type Bucket = 'running' | 'unhealthy' | 'stopped' | 'done'
+type Bucket = ContainerBucket
 type Filter = Bucket | 'attention' | 'all'
-
-function isOneShot(name: string): boolean {
-  return ['init', 'migrat', 'setup', 'provision'].some((marker) => name.toLowerCase().includes(marker))
-}
-
-function bucketOf(container: InstanceDetail): Bucket {
-  if ((container.state ?? '').toLowerCase() !== 'running') return isOneShot(container.name) ? 'done' : 'stopped'
-  return (container.health ?? '').toLowerCase() === 'unhealthy' ? 'unhealthy' : 'running'
-}
 
 function needsAttention(container: InstanceDetail): boolean {
   const bucket = bucketOf(container)
@@ -97,6 +102,12 @@ function memoryLabel(value: number | null): string {
   return value == null ? '—' : `${value} MB`
 }
 
+/** 镜像摘要只展示前 12 位;完整值放在 title 里复制。 */
+function shortDigest(value: string): string {
+  const [algorithm, hash] = value.split(':')
+  return hash ? `${algorithm}:${hash.slice(0, 12)}` : value
+}
+
 /** 容器排障工作台：左侧定位容器，右侧持续查看详情与日志。 */
 export function ContainersPanel({ user }: { user: User }) {
   const [containers, setContainers] = useState<InstanceDetail[]>([])
@@ -108,23 +119,34 @@ export function ContainersPanel({ user }: { user: User }) {
   const [syncedAt, setSyncedAt] = useState<Date | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
+  const [serverFilter, setServerFilter] = useState('all')
+  const [projectFilter, setProjectFilter] = useState('all')
+  const [updatesByProject, setUpdatesByProject] = useState<Map<string, UpdateConfig>>(new Map())
   const [selectedId, setSelectedId] = useState<number | null>(null)
   // 用户手动折叠/展开过的分组；没动过的分组按是否有异常推导默认状态
   const [collapsedOverrides, setCollapsedOverrides] = useState<Map<string, boolean>>(new Map())
   const [workspace, setWorkspace] = useState<Project | null>(null)
   const [workspaceTab, setWorkspaceTab] = useState<'overview' | 'services' | 'config'>('overview')
   const [workspaceFocus, setWorkspaceFocus] = useState<number | null>(null)
+  const [logTarget, setLogTarget] = useState<InstanceDetail | null>(null)
+  const [trendTarget, setTrendTarget] = useState<InstanceDetail | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     try {
-      const [instances, serverList, projectList, actionCatalog] = await Promise.all([
-        api.instancesDetail(), api.servers(), api.projects(), api.actionCatalog(),
+      const [instances, serverList, projectList, actionCatalog, updates] = await Promise.all([
+        api.instancesDetail(),
+        api.servers(),
+        api.projects(),
+        api.actionCatalog(),
+        // 更新状态只是容器页的辅助信息,失败不应让整页变成错误态。
+        api.updates().catch(() => []),
       ])
       setContainers(instances)
       setServers(serverList)
       setProjects(projectList)
       setCatalog(actionCatalog)
+      setUpdatesByProject(new Map(updates.filter((item) => item.config).map((item) => [item.project_id, item.config as UpdateConfig])))
       setError(null)
       setSyncedAt(new Date())
     } catch (err) {
@@ -140,15 +162,47 @@ export function ContainersPanel({ user }: { user: User }) {
     return () => clearInterval(timer)
   }, [load])
 
-  const counts = useMemo(() => {
+  // 顶部信号轨始终看全舰队;列表的计数跟随服务器/项目作用域。
+  const fleetCounts = useMemo(() => {
     const value = { running: 0, unhealthy: 0, stopped: 0, done: 0 }
     for (const container of containers) value[bucketOf(container)] += 1
     return value
   }, [containers])
 
+  const serverOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const container of containers) {
+      if (container.server_id) seen.set(container.server_id, container.server_name ?? '未知服务器')
+    }
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [containers])
+
+  const projectOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const container of containers) {
+      if (serverFilter !== 'all' && container.server_id !== serverFilter) continue
+      seen.set(container.project_id, container.project_name ?? '未归属项目')
+    }
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [containers, serverFilter])
+
+  const scoped = useMemo(
+    () => containers.filter((container) => (
+      (serverFilter === 'all' || container.server_id === serverFilter)
+      && (projectFilter === 'all' || container.project_id === projectFilter)
+    )),
+    [containers, serverFilter, projectFilter],
+  )
+
+  const counts = useMemo(() => {
+    const value = { running: 0, unhealthy: 0, stopped: 0, done: 0 }
+    for (const container of scoped) value[bucketOf(container)] += 1
+    return value
+  }, [scoped])
+
   const visible = useMemo(() => {
     const text = query.trim().toLowerCase()
-    return containers.filter((container) => {
+    return scoped.filter((container) => {
       const bucket = bucketOf(container)
       if (filter === 'attention' && !needsAttention(container)) return false
       if (filter !== 'all' && filter !== 'attention' && bucket !== filter) return false
@@ -157,7 +211,7 @@ export function ContainersPanel({ user }: { user: User }) {
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(text))
     })
-  }, [containers, filter, query])
+  }, [scoped, filter, query])
 
   // 按项目分组:容器配置属于 Compose 项目,项目才是排障的归属单位。
   // 服务器作为组头的第二行保留,需要按机器定位时仍能直接读到。
@@ -180,8 +234,8 @@ export function ContainersPanel({ user }: { user: User }) {
   }, [visible])
 
   const projectCount = useMemo(
-    () => new Set(containers.map((container) => container.project_id)).size,
-    [containers],
+    () => new Set(scoped.map((container) => container.project_id)).size,
+    [scoped],
   )
 
   const selected = containers.find((container) => container.id === selectedId) ?? null
@@ -193,18 +247,25 @@ export function ContainersPanel({ user }: { user: User }) {
     setSelectedId((firstIssue ?? containers[0] ?? null)?.id ?? null)
   }, [containers, selectedId])
 
+  // 筛选或搜索把当前选中项排除时，详情跟随到可见列表首项。
+  useEffect(() => {
+    if (visible.length === 0) return
+    if (visible.some((container) => container.id === selectedId)) return
+    setSelectedId(visible[0].id)
+  }, [visible, selectedId])
+
   if (loading) return <PageSkeleton />
   if (error && containers.length === 0) return <p className="py-16 text-center text-ink-danger">加载失败：{error}</p>
 
   const attention = counts.unhealthy + counts.stopped
   const filters: Array<{ key: Filter; label: string; count: number }> = [
-    { key: 'all', label: '全部', count: containers.length },
+    { key: 'all', label: '全部', count: scoped.length },
     { key: 'attention', label: '需关注', count: attention },
     { key: 'running', label: '运行中', count: counts.running },
     { key: 'done', label: '已完成', count: counts.done },
   ]
 
-  const filtering = query.trim() !== '' || filter !== 'all'
+  const filtering = query.trim() !== '' || filter !== 'all' || serverFilter !== 'all' || projectFilter !== 'all'
 
   const toggleGroup = (id: string, isCollapsed: boolean) => setCollapsedOverrides(
     (previous) => new Map(previous).set(id, !isCollapsed),
@@ -213,6 +274,8 @@ export function ContainersPanel({ user }: { user: User }) {
   const resetFilters = () => {
     setQuery('')
     setFilter('all')
+    setServerFilter('all')
+    setProjectFilter('all')
   }
 
   const openWorkspace = (project: Project, focusId?: number) => {
@@ -228,6 +291,8 @@ export function ContainersPanel({ user }: { user: User }) {
     setSelectedId(container.id)
     setQuery('')
     setFilter('all')
+    setServerFilter('all')
+    setProjectFilter('all')
     setCollapsedOverrides((previous) => new Map(previous).set(container.project_id, false))
     requestAnimationFrame(() => {
       listRef.current?.querySelector<HTMLElement>(`[data-container-id="${container.id}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -238,7 +303,7 @@ export function ContainersPanel({ user }: { user: User }) {
     <div className="flex flex-col gap-3">
       <FleetBar
         containers={containers}
-        counts={counts}
+        counts={fleetCounts}
         serverCount={servers.length}
         selectedId={selectedId}
         onSelect={selectFromRail}
@@ -260,7 +325,7 @@ export function ContainersPanel({ user }: { user: User }) {
                 <span className="text-[10px] text-ink-tertiary">按项目 · {projectCount} 个</span>
               </div>
               <span className="text-[10.5px] tabular-nums text-ink-tertiary">
-                {filtering ? `${visible.length} / ${containers.length}` : containers.length} 个容器
+                {filtering ? `${visible.length} / ${scoped.length}` : containers.length} 个容器
               </span>
             </div>
 
@@ -269,7 +334,7 @@ export function ContainersPanel({ user }: { user: User }) {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索名称、镜像、项目"
+                placeholder="搜索名称、镜像、服务器"
                 aria-label="搜索容器"
                 className="h-7 w-full rounded-md border border-line bg-background ps-7 pe-7 text-[11.5px] text-ink outline-none placeholder:text-ink-tertiary focus:border-line-strong"
               />
@@ -283,6 +348,38 @@ export function ContainersPanel({ user }: { user: User }) {
                   <X className="size-3" />
                 </button>
               ) : null}
+            </div>
+
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+              <label className="relative block">
+                <ServerIcon className="pointer-events-none absolute start-2 top-1/2 size-3 -translate-y-1/2 text-ink-tertiary" />
+                <select
+                  value={serverFilter}
+                  onChange={(event) => {
+                    setServerFilter(event.target.value)
+                    setProjectFilter('all')
+                  }}
+                  aria-label="按服务器筛选"
+                  className="h-6 w-full cursor-pointer appearance-none rounded-sm border border-line bg-background ps-6 pe-5 text-[10.5px] text-ink-secondary outline-none focus:border-line-strong"
+                >
+                  <option value="all">全部服务器</option>
+                  {serverOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute end-1.5 top-1/2 size-3 -translate-y-1/2 text-ink-tertiary" />
+              </label>
+              <label className="relative block">
+                <FolderOpen className="pointer-events-none absolute start-2 top-1/2 size-3 -translate-y-1/2 text-ink-tertiary" />
+                <select
+                  value={projectFilter}
+                  onChange={(event) => setProjectFilter(event.target.value)}
+                  aria-label="按项目筛选"
+                  className="h-6 w-full cursor-pointer appearance-none rounded-sm border border-line bg-background ps-6 pe-5 text-[10.5px] text-ink-secondary outline-none focus:border-line-strong"
+                >
+                  <option value="all">全部项目</option>
+                  {projectOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute end-1.5 top-1/2 size-3 -translate-y-1/2 text-ink-tertiary" />
+              </label>
             </div>
 
             <div className="mt-1.5 flex flex-wrap items-center gap-0.5">
@@ -375,6 +472,14 @@ export function ContainersPanel({ user }: { user: User }) {
                             {bucket !== 'running' ? (
                               <span className={cn('shrink-0 text-[10px]', TONE[bucket].text)}>{LABEL[bucket]}</span>
                             ) : null}
+                            {container.oom_killed ? (
+                              <span
+                                className="shrink-0 rounded-sm bg-tint-danger px-1 py-px text-[9px] font-semibold text-ink-danger"
+                                title="因内存超限(OOM)被终止"
+                              >
+                                OOM
+                              </span>
+                            ) : null}
                           </span>
                           <span className="mt-0.5 block truncate text-[10.5px] text-ink-tertiary">
                             {container.project_name ?? '未归属项目'} · {container.image ?? '未知镜像'}
@@ -405,14 +510,21 @@ export function ContainersPanel({ user }: { user: User }) {
 
         <ContainerDetail
           container={selected}
-          canReadLogs={user.role === 'admin'}
+          update={selected ? updatesByProject.get(selected.project_id) ?? null : null}
           canOperate={user.role !== 'viewer'}
           canEdit={user.role === 'admin'}
+          canViewLogs={user.role === 'admin'}
           projects={projects}
           catalog={catalog}
           onEdit={openWorkspace}
+          onLogs={setLogTarget}
+          onTrends={setTrendTarget}
+          onRefresh={load}
         />
       </div>
+
+      {logTarget ? <ContainerLogDialog container={logTarget} onClose={() => setLogTarget(null)} /> : null}
+      {trendTarget ? <ContainerTrendDialog container={trendTarget} onClose={() => setTrendTarget(null)} /> : null}
 
       {workspace ? (
         <ProjectWorkspaceDialog
@@ -509,14 +621,18 @@ function FleetBar({ containers, counts, serverCount, selectedId, onSelect }: {
   )
 }
 
-function ContainerDetail({ container, canReadLogs, canOperate, canEdit, projects, catalog, onEdit }: {
+function ContainerDetail({ container, update, canOperate, canEdit, canViewLogs, projects, catalog, onEdit, onLogs, onTrends, onRefresh }: {
   container: InstanceDetail | null
-  canReadLogs: boolean
+  update: UpdateConfig | null
   canOperate: boolean
   canEdit: boolean
+  canViewLogs: boolean
   projects: Project[]
   catalog: ActionCatalogItem[]
   onEdit: (project: Project, focusId?: number) => void
+  onLogs: (container: InstanceDetail) => void
+  onTrends: (container: InstanceDetail) => void
+  onRefresh: () => Promise<void>
 }) {
   if (!container) {
     return (
@@ -535,11 +651,16 @@ function ContainerDetail({ container, canReadLogs, canOperate, canEdit, projects
   const health = container.health
     ? (HEALTH_TEXT[container.health.toLowerCase()] ?? container.health)
     : '—'
-  const ports = project?.ports?.length
-    ? project.ports
-      .map((port) => `${port.host ?? '?'} → ${port.container ?? '?'}${port.proto ? `/${port.proto}` : ''}`)
-      .join('、')
-    : null
+  // 运行中的真实端口优先;旧采集器没有该字段时退回项目登记的映射。
+  const runtimePorts = container.ports?.length ? container.ports : null
+  const registeredPorts = project?.ports?.length ? project.ports : null
+  const portItems = runtimePorts ?? registeredPorts
+  const ports = portItems ? portItems.map(portLabel).join('、') : null
+  const portsTitle = runtimePorts
+    ? '采集自容器运行配置'
+    : registeredPorts
+      ? '项目登记的端口映射'
+      : undefined
   const vitals = [
     { label: '内存', value: memoryLabel(container.mem_used_mb), title: '当前内存占用' },
     {
@@ -547,17 +668,28 @@ function ContainerDetail({ container, canReadLogs, canOperate, canEdit, projects
       value: container.mem_limit_mb != null && container.mem_limit_mb > 0 ? `${container.mem_limit_mb} MB` : '未设置',
       title: '容器内存上限',
     },
-    { label: '健康检查', value: health, title: container.health ?? '采集器未上报健康检查' },
+    { label: '健康检查', value: health, title: container.health ?? undefined },
+    // 已退出的容器看"什么时候退出"才有排障价值,"启动"只剩历史。
+    bucket === 'stopped' || bucket === 'done'
+      ? {
+          label: '退出',
+          value: container.finished_at ? `${elapsedSince(container.finished_at)}前` : '—',
+          title: absoluteTime(container.finished_at),
+        }
+      : {
+          label: '启动',
+          value: container.started_at ? `${elapsedSince(container.started_at)}前` : '—',
+          title: absoluteTime(container.started_at),
+        },
     {
-      label: '启动',
-      value: container.started_at ? `${elapsedSince(container.started_at)}前` : '—',
-      title: absoluteTime(container.started_at),
+      label: '退出码',
+      value: detailValue(container.exit_code),
+      title: container.oom_killed ? '最近一次退出的退出码（由 OOM 终止）' : '最近一次退出的退出码',
     },
-    { label: '退出码', value: detailValue(container.exit_code), title: '最近一次退出的退出码' },
     {
       label: '端口',
-      value: ports ?? '未采集',
-      title: ports ? '项目登记的端口映射' : '采集器暂未上报端口映射',
+      value: ports ?? '—',
+      title: portsTitle,
     },
   ]
 
@@ -577,22 +709,68 @@ function ContainerDetail({ container, canReadLogs, canOperate, canEdit, projects
                 <span className="text-[10.5px] text-ink-tertiary" title={absoluteTime(container.updated_at)}>
                   · 更新 {shortTime(container.updated_at)}
                 </span>
+                {container.oom_killed ? (
+                  <span
+                    className="rounded-sm bg-tint-danger px-1.5 py-0.5 text-[9.5px] font-semibold tracking-wide text-ink-danger"
+                    title="容器最近一次退出由内存超限(OOM)引起，通常意味着需要提高内存上限或排查内存泄漏"
+                  >
+                    OOM
+                  </span>
+                ) : null}
+                {container.restart_count != null && container.restart_count > 0 ? (
+                  <span className="text-[10.5px] tabular-nums text-ink-tertiary" title="Docker 记录的重启次数">
+                    · 重启 {container.restart_count} 次
+                  </span>
+                ) : null}
+                {update?.status === 'update_available' ? (
+                  <span
+                    className="rounded-sm bg-tint-warning px-1.5 py-0.5 text-[9.5px] font-semibold tracking-wide text-ink-warning"
+                    title={[
+                      update.latest_version ? `最新版本 ${update.latest_version}` : null,
+                      update.detail,
+                      update.last_checked_at ? `检查于 ${absoluteTime(update.last_checked_at)}` : null,
+                    ].filter(Boolean).join('\n')}
+                  >
+                    有更新
+                  </span>
+                ) : null}
               </div>
               <h2 className="mono mt-1 truncate text-[18px] font-semibold tracking-tight text-ink" title={container.name}>
                 {container.name}
               </h2>
             </div>
 
-            {editable ? (
+            <div className="mt-0.5 flex shrink-0 items-center gap-1">
               <button
                 type="button"
-                onClick={() => onEdit(editable, container.id)}
-                className="mt-0.5 flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-line bg-primary px-2 text-[10.5px] font-medium text-ink-secondary transition-colors hover:bg-accent-soft hover:text-ink"
+                onClick={() => onTrends(container)}
+                title="查看 CPU、内存、网络与磁盘 IO 曲线"
+                className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-line bg-primary px-2 text-[10.5px] font-medium text-ink-secondary transition-colors hover:bg-accent-soft hover:text-ink"
               >
-                <Pencil className="size-3" />
-                {editable.work_dir ? '编辑配置' : '项目详情'}
+                <Activity className="size-3" />
+                趋势
               </button>
-            ) : null}
+              {canViewLogs ? (
+                <button
+                  type="button"
+                  onClick={() => onLogs(container)}
+                  className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-line bg-primary px-2 text-[10.5px] font-medium text-ink-secondary transition-colors hover:bg-accent-soft hover:text-ink"
+                >
+                  <Terminal className="size-3" />
+                  日志
+                </button>
+              ) : null}
+              {editable ? (
+                <button
+                  type="button"
+                  onClick={() => onEdit(editable, container.id)}
+                  className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-line bg-primary px-2 text-[10.5px] font-medium text-ink-secondary transition-colors hover:bg-accent-soft hover:text-ink"
+                >
+                  <Pencil className="size-3" />
+                  {editable.work_dir ? '编辑配置' : '项目详情'}
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <p className="mt-1 truncate text-[11px] text-ink-tertiary" title={`${container.server_name ?? '未知服务器'} · ${container.project_name ?? '未归属项目'} · ${container.image ?? '未知镜像'}`}>
@@ -609,15 +787,152 @@ function ContainerDetail({ container, canReadLogs, canOperate, canEdit, projects
           ))}
         </dl>
 
-        {canOperate && project ? <ProjectActions project={project} catalog={catalog} /> : null}
-      </header>
+        {bucket === 'unhealthy' && container.health_detail ? (
+          <div className="flex items-start gap-1.5 border-t border-line bg-tint-danger/40 px-4 py-2 text-ink-danger">
+            <AlertTriangle className="mt-px size-3 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-medium">健康检查失败</span>
+              <p
+                className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-[10.5px] text-ink-secondary"
+                title={container.health_detail}
+              >
+                {container.health_detail}
+              </p>
+            </div>
+          </div>
+        ) : null}
 
-      {canReadLogs ? <ContainerLogPanel key={container.id} container={container} /> : (
-        <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-[12px] text-ink-tertiary">
-          仅管理员可以查看容器日志。
-        </div>
-      )}
+        <ContainerActions key={container.id} container={container} canOperate={canOperate} onRefresh={onRefresh} />
+
+        <RuntimeConfig container={container} />
+
+        {canOperate && project ? (
+          <ProjectActions project={project} catalog={catalog} />
+        ) : null}
+      </header>
     </Card>
+  )
+}
+
+/** 容器的真实运行配置。没有数据的行整行隐藏,不写技术兜底文案。 */
+function RuntimeConfig({ container }: { container: InstanceDetail }) {
+  const ports = container.ports ?? []
+  const mounts = container.mounts ?? []
+  const envKeys = container.env_keys ?? []
+  const policy = container.restart_policy ?? ''
+
+  if (ports.length === 0 && mounts.length === 0 && envKeys.length === 0 && !policy && !container.image_digest) {
+    return null
+  }
+
+  const visibleMounts = mounts.slice(0, 3)
+  const restMounts = mounts.slice(3)
+  const visibleEnv = envKeys.slice(0, 8)
+  const restEnv = envKeys.slice(8)
+
+  return (
+    <div className="border-t border-line px-4 py-2.5">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-ink-tertiary">
+        <Settings2 className="size-3" />
+        运行配置
+      </div>
+      <dl className="space-y-1.5">
+        {container.image_digest ? (
+          <div className="flex min-w-0 items-start gap-2">
+            <dt className="w-14 shrink-0 pt-0.5 text-[10.5px] text-ink-tertiary">镜像</dt>
+            <dd className="min-w-0 flex-1">
+              <div className="mono truncate text-[10.5px] text-ink-secondary" title={container.image ?? undefined}>
+                {container.image ?? '—'}
+              </div>
+              <div className="mono mt-0.5 text-[10px] text-ink-tertiary" title={container.image_digest}>
+                {shortDigest(container.image_digest)}
+              </div>
+            </dd>
+          </div>
+        ) : null}
+
+        {ports.length > 0 ? (
+          <div className="flex min-w-0 items-start gap-2">
+            <dt className="w-14 shrink-0 pt-0.5 text-[10.5px] text-ink-tertiary">端口</dt>
+            <dd className="flex min-w-0 flex-wrap gap-1">
+              {ports.map((port, index) => (
+                <span
+                  key={`${port.host ?? ''}-${port.container ?? ''}-${port.proto ?? ''}-${index}`}
+                  className="mono rounded-sm bg-sunken px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                >
+                  {portLabel(port)}
+                </span>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+
+        {mounts.length > 0 ? (
+          <div className="flex min-w-0 items-start gap-2">
+            <dt className="w-14 shrink-0 pt-0.5 text-[10.5px] text-ink-tertiary">挂载</dt>
+            <dd className="min-w-0 flex-1 space-y-1">
+              {visibleMounts.map((mount, index) => (
+                <div
+                  key={`${mount.type}:${mount.destination}:${index}`}
+                  className="flex min-w-0 items-baseline gap-1.5 text-[10.5px]"
+                >
+                  <span className="shrink-0 rounded-sm bg-overlay-medium px-1 text-[9.5px] text-ink-tertiary">
+                    {mount.type}
+                  </span>
+                  <span
+                    className="mono min-w-0 truncate text-ink-secondary"
+                    title={`${mount.source} → ${mount.destination}`}
+                  >
+                    {mount.destination} <span className="text-ink-tertiary">←</span> {mount.source}
+                  </span>
+                  {mount.readonly ? (
+                    <span className="shrink-0 text-[9.5px] text-ink-tertiary">只读</span>
+                  ) : null}
+                </div>
+              ))}
+              {restMounts.length > 0 ? (
+                <span
+                  className="text-[10px] text-ink-tertiary"
+                  title={restMounts.map((mount) => `${mount.destination} ← ${mount.source}`).join('\n')}
+                >
+                  +{restMounts.length} 条
+                </span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
+
+        {envKeys.length > 0 ? (
+          <div className="flex min-w-0 items-start gap-2">
+            <dt className="w-14 shrink-0 pt-0.5 text-[10.5px] text-ink-tertiary">环境变量</dt>
+            <dd className="flex min-w-0 flex-wrap items-center gap-1">
+              {visibleEnv.map((key) => (
+                <span
+                  key={key}
+                  className="mono rounded-sm bg-sunken px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                >
+                  {key}
+                </span>
+              ))}
+              {restEnv.length > 0 ? (
+                <span className="text-[10px] text-ink-tertiary" title={restEnv.join('、')}>
+                  +{restEnv.length}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
+
+        {policy ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <dt className="w-14 shrink-0 text-[10.5px] text-ink-tertiary">重启策略</dt>
+            <dd>
+              <Badge tone="neutral">{restartPolicyLabel(policy)}</Badge>
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
   )
 }
 
@@ -646,11 +961,93 @@ function ActionButton({ children, onClick, disabled, danger = false, title }: {
   )
 }
 
-/** 现有后端的安全边界是项目级 compose 操作，必须明确写出来，避免误导成单容器控制。 */
-function ProjectActions({ project, catalog }: { project: Project; catalog: ActionCatalogItem[] }) {
+/** 单容器操作。只动当前选中的容器，和底部"项目级操作"明确区分。 */
+function ContainerActions({ container, canOperate, onRefresh }: {
+  container: InstanceDetail
+  canOperate: boolean
+  onRefresh: () => Promise<void>
+}) {
   const [running, setRunning] = useState<string | null>(null)
   const [result, setResult] = useState<{ text: string; ok: boolean } | null>(null)
-  const [showLogs, setShowLogs] = useState(false)
+
+  if (!canOperate) return null
+
+  const state = (container.state ?? '').toLowerCase()
+  const live = state === 'running' || state === 'restarting' || state === 'paused'
+  // 一次性任务跑完退出是正常生命周期，再启动往往会把初始化逻辑重跑一遍。
+  if (!live && isOneShot(container)) return null
+
+  const actions = live
+    ? [
+        { key: 'container_restart', label: '重启', icon: <RotateCcw className="size-3" />, danger: false },
+        { key: 'container_stop', label: '停止', icon: <Square className="size-3" />, danger: true },
+      ]
+    : [{ key: 'container_start', label: '启动', icon: <Play className="size-3" />, danger: false }]
+
+  const run = async (action: (typeof actions)[number]) => {
+    if (action.key === 'container_stop' && !confirm(
+      `确认停止容器「${container.name}」？\n\n只影响这一个容器，服务会立即不可用。`,
+    )) return
+
+    setRunning(action.key)
+    setResult(null)
+    try {
+      const log = await api.containerAction(container.id, action.key, action.key === 'container_stop')
+      const ok = log.status === 'success'
+      const tail = (log.output ?? '').split('\n').filter((line) => line.trim() !== '').at(-1)
+      setResult({
+        text: ok ? `${action.label}已完成` : `失败：${tail ?? `命令退出码 ${log.exit_code ?? '未知'}`}`,
+        ok,
+      })
+      await onRefresh()
+    } catch (error) {
+      setResult({ text: (error as Error).message, ok: false })
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-line px-4 py-2">
+      <span className="min-w-0 truncate text-[10.5px] text-ink-tertiary">
+        容器操作 · <span className="mono text-ink-secondary">{container.name}</span>
+      </span>
+
+      <div className="ms-auto flex flex-wrap items-center gap-1">
+        {result ? (
+          <span className={cn('me-1 max-w-60 truncate text-[10.5px]', result.ok ? 'text-ink-success' : 'text-ink-danger')} title={result.text}>
+            {result.text}
+          </span>
+        ) : null}
+
+        {actions.map((action) => (
+          <ActionButton
+            key={action.key}
+            disabled={running !== null}
+            danger={action.danger}
+            title={action.key === 'container_stop'
+              ? '只停止这一个容器，同项目其它服务不受影响'
+              : action.key === 'container_restart'
+                ? '只重启这一个容器，不重建、不更新镜像'
+                : '启动这一个已停止的容器，不重建、不更新镜像'}
+            onClick={() => void run(action)}
+          >
+            {action.icon}
+            {running === action.key ? '执行中…' : action.label}
+          </ActionButton>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** 现有后端的安全边界是项目级 compose 操作，必须明确写出来，避免误导成单容器控制。 */
+function ProjectActions({ project, catalog }: {
+  project: Project
+  catalog: ActionCatalogItem[]
+}) {
+  const [running, setRunning] = useState<string | null>(null)
+  const [result, setResult] = useState<{ text: string; ok: boolean } | null>(null)
   const available = catalog.filter((item) => item.enabled && ['restart', 'start', 'stop'].includes(item.key))
 
   const run = async (action: ActionCatalogItem) => {
@@ -680,11 +1077,6 @@ function ProjectActions({ project, catalog }: { project: Project; catalog: Actio
           </span>
         ) : null}
 
-        <ActionButton onClick={() => setShowLogs(true)} title="查看项目内全部服务的日志">
-          <ScrollText className="size-3" />
-          项目日志
-        </ActionButton>
-
         {available.map((action) => (
           <ActionButton
             key={action.key}
@@ -698,8 +1090,6 @@ function ProjectActions({ project, catalog }: { project: Project; catalog: Actio
           </ActionButton>
         ))}
       </div>
-
-      {showLogs ? <ProjectLogDialog project={project} onClose={() => setShowLogs(false)} /> : null}
     </div>
   )
 }

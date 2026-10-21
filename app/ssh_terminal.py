@@ -21,6 +21,7 @@ import asyncssh
 
 from app.config import settings
 from app.models import Server
+from app.ssh_keys import resolve_ssh_key
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ class SSHTerminal:
         if not target:
             raise SSHError(f"服务器「{self.server.name}」未配置 IP 或主机名")
 
+        key = resolve_ssh_key(self.server.ssh_key_path)
         kwargs: dict = {
             "host": target,
             "port": self.server.ssh_port or 22,
@@ -121,8 +123,8 @@ class SSHTerminal:
             "known_hosts": None,  # 首次接入新机器时无已知主机键
             "connect_timeout": 15,
             # 禁用所有交互式认证,只用密钥。避免因等待密码输入而挂起。
-            # 指定了密钥路径时只用该密钥;否则回退到标准密钥。
-            "client_keys": [self.server.ssh_key_path] if self.server.ssh_key_path else None,
+            # asyncssh 把 None 当作"没有可用密钥";空元组才会加载默认密钥文件。
+            "client_keys": [key] if key else (),
             "preferred_auth": ["publickey"],
             "encoding": None,  # 使用 bytes,终端输出可能是任意字节序列
         }

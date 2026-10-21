@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,19 +36,40 @@ class MetricsPayload(BaseModel):
 class InstancePayload(BaseModel):
     """采集到的一个容器实例。
 
-    `project` 对应 Docker Compose 的项目名,用于匹配已登记的项目资产。
-    未登记的项目会被忽略,不会自动创建资产。
+    `project` 对应 Docker Compose 的项目名。未匹配到已登记项目时,
+    后端会以 discovered 状态自动登记,而不是丢弃。
     """
 
     name: str = Field(max_length=255)
     project: str = Field(default="", max_length=64)
     image: str | None = Field(default=None, max_length=255)
+    image_digest: str | None = Field(default=None, max_length=128)
     state: str | None = Field(default=None, max_length=32)
     health: str | None = Field(default=None, max_length=32)
+    health_detail: str | None = Field(default=None, max_length=1000)
+    one_off: bool = False
     exit_code: int | None = None
     started_at: datetime | None = None
+    restart_count: int | None = Field(default=None, ge=0)
+    oom_killed: bool | None = None
+    finished_at: datetime | None = None
     mem_used_mb: int | None = Field(default=None, ge=0)
     mem_limit_mb: int | None = Field(default=None, ge=0)
+    # 容器资源速率:CPU 为整机占比,其余为字节/秒。None 表示本帧没有基线。
+    cpu_percent: float | None = Field(default=None, ge=0)
+    net_rx_bps: float | None = Field(default=None, ge=0)
+    net_tx_bps: float | None = Field(default=None, ge=0)
+    block_read_bps: float | None = Field(default=None, ge=0)
+    block_write_bps: float | None = Field(default=None, ge=0)
+
+    # Compose 标签,用于识别项目工作目录与 Compose 文件
+    compose_working_dir: str | None = Field(default=None, max_length=512)
+    compose_file: str | None = Field(default=None, max_length=255)
+    # 容器运行配置。env_keys 只包含键名,值不进入上报体。
+    ports: list[dict[str, Any]] | None = Field(default=None, max_length=50)
+    mounts: list[dict[str, Any]] | None = Field(default=None, max_length=50)
+    env_keys: list[str] | None = Field(default=None, max_length=100)
+    restart_policy: str | None = Field(default=None, max_length=64)
 
 
 class ReportPayload(BaseModel):
@@ -66,8 +87,11 @@ class IngestResult(BaseModel):
 
     server_id: uuid.UUID
     server_name: str
-    instances_synced: int = Field(description="已匹配到登记项目的实例数")
-    instances_ignored: int = Field(description="因项目未登记而忽略的实例数")
+    instances_synced: int = Field(description="已同步到项目的实例数")
+    instances_ignored: int = Field(description="未同步的实例数:非 Compose 容器、已忽略项目或名称冲突")
+    projects_created: int = Field(default=0, description="本轮自动发现的未托管项目数")
+    projects_conflicts: int = Field(default=0, description="因名称冲突或匹配不唯一而跳过的实例数")
+    instances_skipped_ignored: int = Field(default=0, description="属于已忽略项目而未同步的实例数")
 
 
 # ---------------------------------------------------------------- 查询(后端 → 前端)
@@ -91,6 +115,22 @@ class MetricRead(BaseModel):
     load_1: float | None
     load_5: float | None
     load_15: float | None
+
+
+class ContainerMetricRead(BaseModel):
+    """容器指标快照读取模型。空桶的 id 用负数占位,其余字段为 None。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    instance_id: int
+    captured_at: datetime
+    cpu_percent: float | None
+    mem_used_mb: int | None
+    net_rx_bps: float | None
+    net_tx_bps: float | None
+    block_read_bps: float | None
+    block_write_bps: float | None
 
 
 class InstanceRead(BaseModel):
@@ -120,12 +160,23 @@ class InstanceDetailRead(InstanceRead):
     project_name: str | None = None
     server_id: uuid.UUID | None = None
     server_name: str | None = None
-    # 容器的启动时间与退出码。「容器」页要算运行时长、要看退出码,
-    # 而这两列在 models.Instance 里已经存在,只是此前没往外吐。
-    # 注意:采集器目前不上报这两个值,所以它们常常是 None —— 前端必须
-    # 把 None 渲染成「—」而不是 0 或 1970 年。
+    # 镜像 digest 与最近一次健康检查输出(旧采集器为 None)
+    image_digest: str | None = None
+    health_detail: str | None = None
+    # Docker Compose 一次性任务标签
+    one_off: bool = False
+    # 容器的启动时间与退出码。旧采集器不上报,前端必须把 None 渲染成「—」。
     started_at: datetime | None = None
     exit_code: int | None = None
+    # 崩溃排障:重启次数、OOM 终止标记、最近一次退出时间
+    restart_count: int | None = None
+    oom_killed: bool | None = None
+    finished_at: datetime | None = None
+    # 运行配置:端口、挂载、环境变量键名与重启策略
+    ports: list[dict[str, Any]] | None = None
+    mounts: list[dict[str, Any]] | None = None
+    env_keys: list[str] | None = None
+    restart_policy: str | None = None
 
 
 class EventRead(BaseModel):

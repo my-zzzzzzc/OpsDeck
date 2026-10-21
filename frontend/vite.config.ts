@@ -27,6 +27,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      // 日志流与 Web 终端走 WebSocket;不代理的话浏览器会连到 Vite 自己,
+      // 表现为日志面板直接"异常"且拿不到后端返回的原因。
+      '/ws': {
+        target: 'ws://127.0.0.1:8000',
+        ws: true,
+      },
     },
   },
 })

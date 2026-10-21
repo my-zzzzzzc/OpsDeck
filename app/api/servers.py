@@ -17,6 +17,7 @@ from app.schemas.assets import (
     ServerUpdate,
     ServerWithProjects,
 )
+from app.ssh_keys import resolve_ssh_key
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 
@@ -189,7 +190,7 @@ async def test_ssh(
     if not target:
         return {"ok": False, "stage": "config", "message": "服务器未配置 IP 或主机名"}
 
-    key_path = server.ssh_key_path
+    key_path = resolve_ssh_key(server.ssh_key_path)
     if key_path:
         # 路径写错的表现是"认证失败",但真实原因是文件不存在 —— 提前分开报。
         from pathlib import Path
@@ -204,7 +205,8 @@ async def test_ssh(
             username=server.ssh_user or "root",
             known_hosts=None,
             connect_timeout=10,
-            client_keys=[key_path] if key_path else None,
+            # asyncssh 把 None 当作"没有可用密钥";空元组才会加载默认密钥文件。
+            client_keys=[key_path] if key_path else (),
             preferred_auth=["publickey"],
         )
     except asyncssh.PermissionDenied:

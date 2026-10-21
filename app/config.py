@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     terminal_recording_days: int = 7
     terminal_recording_max_mb: int = 10
 
+    # 本地开发 SSH 密钥覆盖。服务器上记录的是容器内 POSIX 路径,
+    # 在 Windows 开发机上不可读;覆盖目录按文件名映射到本机密钥。
+    ssh_key_override_dir: str = ""
+    # 服务器未配置 ssh_key_path 时使用的默认私钥;留空则用 OpenSSH 默认身份文件。
+    ssh_default_key_path: str = ""
+
     # 首次启动时自动创建的管理员账号(仅当用户表为空时生效)
     initial_admin_username: str = "admin"
     initial_admin_password: str = ""

@@ -139,6 +139,11 @@ class ProjectRead(ProjectBase):
     id: uuid.UUID
     server_id: uuid.UUID
     server_name: str | None = None
+    # 只读:由采集发现与接管接口维护,不能通过 ProjectCreate/ProjectUpdate 写入
+    lifecycle: Literal["managed", "discovered", "ignored"] = "managed"
+    compose_project: str | None = None
+    last_seen_at: datetime | None = None
+    container_count: int | None = None
     last_deploy_at: datetime | None = None
     last_deploy_status: str | None = None
     last_deploy_username: str | None = None
@@ -147,6 +152,16 @@ class ProjectRead(ProjectBase):
     update_branch: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectAdopt(BaseModel):
+    """接管一个自动发现的项目:只登记资产,不重启、不执行任何远端命令。"""
+
+    name: str | None = Field(default=None, max_length=64, description="显示名;留空沿用 Compose 项目名")
+    work_dir: str = Field(max_length=512, description="项目工作目录,必须是绝对路径")
+    compose_file: str = Field(max_length=255, description="Compose 文件名,必须位于项目工作目录中")
+    url: str | None = Field(default=None, max_length=512)
+    note: str | None = None
 
 
 class ProjectConfigRead(BaseModel):

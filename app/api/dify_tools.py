@@ -111,6 +111,7 @@ def tool_list_containers(
         select(Instance, Project, Server)
         .join(Project, Instance.project_id == Project.id)
         .join(Server, Project.server_id == Server.id)
+        .where(Project.lifecycle == "managed")
     )
 
     if state:
@@ -187,10 +188,12 @@ def tool_get_project(
     _: None = ToolAuth,
     name: str = Query(description="项目名"),
 ) -> dict:
-    """返回单个项目的完整信息。"""
-    project = db.scalar(select(Project).where(Project.name == name))
+    """返回单个项目的完整信息。只暴露已接管项目。"""
+    project = db.scalar(select(Project).where(Project.name == name, Project.lifecycle == "managed"))
     if project is None:
-        available = [p.name for p in db.scalars(select(Project))]
+        available = [
+            p.name for p in db.scalars(select(Project).where(Project.lifecycle == "managed"))
+        ]
         return {"error": f"未找到项目 {name}", "available_projects": available}
 
     server = db.get(Server, project.server_id)
@@ -217,7 +220,7 @@ def tool_get_project(
     description="返回全部已登记项目的概要列表。",
 )
 def tool_list_projects(db: Session = Depends(get_db), _: None = ToolAuth) -> list[dict]:
-    """返回项目概要。"""
+    """返回已接管项目的概要。"""
     servers = {s.id: s.name for s in db.scalars(select(Server))}
     return [
         {
@@ -228,7 +231,7 @@ def tool_list_projects(db: Session = Depends(get_db), _: None = ToolAuth) -> lis
             "url": p.url,
             "tags": p.tags,
         }
-        for p in db.scalars(select(Project).order_by(Project.name))
+        for p in db.scalars(select(Project).where(Project.lifecycle == "managed").order_by(Project.name))
     ]
 
 
@@ -238,9 +241,15 @@ def tool_list_projects(db: Session = Depends(get_db), _: None = ToolAuth) -> lis
     description="返回服务器、容器、告警的汇总统计。适合作为回答'现在整体情况如何'的入口。",
 )
 def tool_summary(db: Session = Depends(get_db), _: None = ToolAuth) -> dict:
-    """返回整体健康度摘要。"""
+    """返回整体健康度摘要。容器只统计已接管项目。"""
     servers = list(db.scalars(select(Server)))
-    instances = list(db.scalars(select(Instance)))
+    instances = list(
+        db.scalars(
+            select(Instance)
+            .join(Project, Project.id == Instance.project_id)
+            .where(Project.lifecycle == "managed")
+        )
+    )
 
     since = datetime.now(UTC) - timedelta(hours=24)
     recent_events = list(

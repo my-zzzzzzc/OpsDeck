@@ -26,20 +26,68 @@ type Metrics struct {
 	Load15      float64 `json:"load_15"`
 }
 
+// Port 是容器的一条端口映射。Host 为 0 表示未发布到宿主机。
+type Port struct {
+	Host      int    `json:"host,omitempty"`
+	Container int    `json:"container"`
+	Proto     string `json:"proto"`
+}
+
+// Mount 是容器的一个挂载点。环境变量的值绝不采集,挂载信息则不含机密。
+type Mount struct {
+	Type        string `json:"type"`
+	Name        string `json:"name,omitempty"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Readonly    bool   `json:"readonly"`
+}
+
 // Instance 是一个容器或进程实例。
 //
 // 注意:StartedAt 使用 *string 而非 time.Time —— 零值 time.Time 会序列化成
 // 非法时间字符串 "" 而被后端契约拒绝,指针在未采集时直接省略该字段。
+//
+// 可空指针字段(ExitCode / RestartCount / OOMKilled / FinishedAt / MemLimitMB /
+// Ports / Mounts / EnvKeys / HealthDetail / ImageDigest / 资源速率)用来区分
+// "采集器明确知道是 0/false/空"与"inspect 失败没拿到":前者照常上报,
+// 后者省略/null,后端据此决定是否覆盖旧值。
 type Instance struct {
-	Name       string  `json:"name"`
-	Project    string  `json:"project"`
-	Image      string  `json:"image"`
-	State      string  `json:"state"`
-	Health     string  `json:"health"`
-	ExitCode   int     `json:"exit_code"`
-	StartedAt  *string `json:"started_at,omitempty"`
-	MemUsedMB  int64   `json:"mem_used_mb"`
-	MemLimitMB int64   `json:"mem_limit_mb"`
+	Name      string  `json:"name"`
+	Project   string  `json:"project"`
+	Image     string  `json:"image"`
+	ImageDigest *string `json:"image_digest,omitempty"`
+	State     string  `json:"state"`
+	Health    string  `json:"health"`
+	// 最近一次健康检查的输出(已去除 ANSI 控制符并截断)。
+	HealthDetail *string `json:"health_detail,omitempty"`
+	ExitCode  *int    `json:"exit_code,omitempty"`
+	StartedAt *string `json:"started_at,omitempty"`
+	MemUsedMB  int64  `json:"mem_used_mb"`
+	MemLimitMB *int64 `json:"mem_limit_mb,omitempty"`
+
+	// 容器资源速率。CPU 为整机占比(0-100);网络与块 IO 为字节/秒。
+	// 首个采样点没有基线,保持 nil,不能报 0。
+	CPUPercent    *float64 `json:"cpu_percent,omitempty"`
+	NetRxBps      *float64 `json:"net_rx_bps,omitempty"`
+	NetTxBps      *float64 `json:"net_tx_bps,omitempty"`
+	BlockReadBps  *float64 `json:"block_read_bps,omitempty"`
+	BlockWriteBps *float64 `json:"block_write_bps,omitempty"`
+
+	// 崩溃排障字段:重启次数、是否因 OOM 被终止、最近一次退出时间。
+	// OOMKilled=false 是有效信息(明确没发生 OOM),不能和"没采集到"混为一谈。
+	RestartCount *int    `json:"restart_count,omitempty"`
+	OOMKilled    *bool   `json:"oom_killed,omitempty"`
+	FinishedAt   *string `json:"finished_at,omitempty"`
+
+	// Docker Compose 的一次性任务标签(docker compose run)。普通 service 为 false。
+	OneOff bool `json:"one_off"`
+
+	ComposeWorkingDir string   `json:"compose_working_dir,omitempty"`
+	ComposeFile       string   `json:"compose_file,omitempty"`
+	Ports             []Port   `json:"ports"`
+	Mounts            []Mount  `json:"mounts"`
+	EnvKeys           []string `json:"env_keys"`
+	RestartPolicy     string   `json:"restart_policy,omitempty"`
 }
 
 // Host 是主机基本信息。

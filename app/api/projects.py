@@ -4,17 +4,27 @@ import base64
 import shlex
 import uuid
 from pathlib import PurePosixPath
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.audit import record_audit
 from app.auth import client_ip, require
 from app.db import get_db
+from app.deploy import DeployError, normalize_name, normalize_work_dir
+from app.discovery import normalized_work_dir, validate_bare_compose_file
 from app.executor import execute
-from app.models import ActionLog, Project, ProjectUpdateConfig, Server, User
-from app.schemas.assets import ProjectConfigRead, ProjectConfigUpdate, ProjectCreate, ProjectRead, ProjectUpdate
+from app.models import ActionLog, Instance, Project, ProjectUpdateConfig, Server, User
+from app.schemas.assets import (
+    ProjectAdopt,
+    ProjectConfigRead,
+    ProjectConfigUpdate,
+    ProjectCreate,
+    ProjectRead,
+    ProjectUpdate,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -27,8 +37,22 @@ def _get_project_or_404(db: Session, project_id: uuid.UUID) -> Project:
     return project
 
 
+def _require_managed(project: Project) -> None:
+    """未托管项目是只读资产:编辑、配置与删除都必须先接管。"""
+    if project.lifecycle == "managed":
+        return
+    if project.lifecycle == "ignored":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="项目已忽略,请先恢复并接管")
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="项目尚未接管,请先接管后再操作")
+
+
+def _card(db: Session, project: Project) -> ProjectRead:
+    """单个项目也走列表的补全逻辑,避免详情缺卡片字段。"""
+    return _with_card_meta(db, [project])[0]
+
+
 def _with_card_meta(db: Session, projects: list[Project]) -> list[ProjectRead]:
-    """给项目补上卡片需要的服务器名、最近部署与更新摘要。
+    """给项目补上卡片需要的服务器名、容器数、最近部署与更新摘要。
 
     最近部署只认 project_id 关联:按项目名反查会在多服务器同名时张冠李戴。
     """
@@ -38,6 +62,14 @@ def _with_card_meta(db: Session, projects: list[Project]) -> list[ProjectRead]:
     project_ids = [project.id for project in projects]
     server_names = dict(
         db.execute(select(Server.id, Server.name).where(Server.id.in_({p.server_id for p in projects}))).all()
+    )
+
+    container_counts = dict(
+        db.execute(
+            select(Instance.project_id, func.count())
+            .where(Instance.project_id.in_(project_ids))
+            .group_by(Instance.project_id)
+        ).all()
     )
 
     latest_deploys: dict[uuid.UUID, ActionLog] = {}
@@ -65,6 +97,7 @@ def _with_card_meta(db: Session, projects: list[Project]) -> list[ProjectRead]:
             ProjectRead.model_validate(project).model_copy(
                 update={
                     "server_name": server_names.get(project.server_id),
+                    "container_count": container_counts.get(project.id, 0),
                     "last_deploy_at": log.created_at if log else None,
                     "last_deploy_status": log.status if log else None,
                     "last_deploy_username": log.username if log else None,
@@ -137,13 +170,17 @@ def list_projects(
     _: User = Depends(require("view")),
     server_id: uuid.UUID | None = Query(default=None, description="按服务器筛选"),
     tag: str | None = Query(default=None, description="按标签筛选"),
+    lifecycle: Literal["managed", "discovered", "ignored"] = Query(
+        default="managed", description="按生命周期筛选;默认只返回已接管项目"
+    ),
 ) -> list[ProjectRead]:
-    """返回项目列表,可按服务器或标签筛选。附带卡片摘要。"""
+    """返回项目列表,可按服务器、标签或生命周期筛选。附带卡片摘要。"""
     stmt = select(Project).order_by(Project.name)
     if server_id is not None:
         stmt = stmt.where(Project.server_id == server_id)
     if tag is not None:
         stmt = stmt.where(Project.tags.contains([tag]))
+    stmt = stmt.where(Project.lifecycle == lifecycle)
 
     return _with_card_meta(db, list(db.scalars(stmt)))
 
@@ -183,9 +220,13 @@ def create_project(
 
 
 @router.get("/{project_id}", response_model=ProjectRead, summary="项目详情")
-def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), _: User = Depends(require("view"))) -> Project:
-    """返回项目详情。"""
-    return _get_project_or_404(db, project_id)
+def get_project(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require("view")),
+) -> ProjectRead:
+    """返回项目详情。未托管项目也可读取,但只读。"""
+    return _card(db, _get_project_or_404(db, project_id))
 
 
 @router.patch("/{project_id}", response_model=ProjectRead, summary="更新项目")
@@ -198,6 +239,7 @@ def update_project(
 ) -> Project:
     """局部更新项目字段。"""
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
 
     changes = payload.model_dump(exclude_unset=True)
     new_name = changes.get("name")
@@ -242,6 +284,7 @@ def read_project_config(
     配置中可能有密钥，读取权限比普通项目查看更高；其它项目类型只返回明确的不可编辑说明。
     """
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
     if project.kind != "docker-compose":
         return ProjectConfigRead(kind=project.kind, editable=False, message="此项目类型没有 Compose 配置文件")
 
@@ -269,6 +312,7 @@ def write_project_config(
 ) -> ProjectConfigRead:
     """原子保存已登记 Compose 项目的 YAML / .env，并留下审计记录。"""
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
     compose_name = _require_compose(project)
     if payload.compose_content is None and payload.env_content is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="至少提供一个需要保存的配置文件")
@@ -324,8 +368,9 @@ def delete_project(
     db: Session = Depends(get_db),
     actor: User = Depends(require("manage")),
 ) -> None:
-    """删除项目。"""
+    """删除项目。未托管项目请使用忽略,避免下一轮采集又把它发现回来。"""
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
     record_audit(
         db,
         user_id=actor.id,
@@ -338,3 +383,144 @@ def delete_project(
     )
     db.delete(project)
     db.commit()
+
+
+# ---------------------------------------------------------------- 自动发现项目的接管
+
+
+@router.post("/{project_id}/adopt", response_model=ProjectRead, summary="接管自动发现的项目")
+def adopt_project(
+    project_id: uuid.UUID,
+    payload: ProjectAdopt,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require("manage")),
+) -> ProjectRead:
+    """把 discovered 项目转为 managed。
+
+    只登记资产,不执行 docker compose 或任何远端命令 —— 容器该不该重启,
+    由用户在部署或操作页显式决定。
+    """
+    project = _get_project_or_404(db, project_id)
+    if project.lifecycle != "discovered":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="只有待接管的项目可以接管")
+
+    try:
+        name = normalize_name(payload.name if payload.name is not None else project.name)
+        work_dir = normalize_work_dir(payload.work_dir)
+        compose_file = validate_bare_compose_file(payload.compose_file)
+    except (DeployError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
+    duplicate = db.scalar(
+        select(Project).where(
+            Project.server_id == project.server_id,
+            Project.name == name,
+            Project.id != project.id,
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"该服务器下项目名已存在: {name}")
+
+    # 同一栈只能有一条项目记录;忽略的项目不占用目录,恢复后再接管时会再次校验。
+    others = db.scalars(
+        select(Project).where(
+            Project.server_id == project.server_id,
+            Project.id != project.id,
+            Project.lifecycle.in_(("managed", "discovered")),
+            Project.work_dir.is_not(None),
+        )
+    )
+    for other in others:
+        if normalized_work_dir(other.work_dir) == work_dir:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"该服务器下已有项目占用此工作目录: {other.name}",
+            )
+
+    project.name = name
+    project.work_dir = work_dir
+    project.compose_file = compose_file
+    project.url = (payload.url or "").strip() or None
+    project.note = (payload.note or "").strip() or None
+    project.lifecycle = "managed"
+
+    record_audit(
+        db,
+        user_id=actor.id,
+        username=actor.username,
+        action="adopt",
+        target_type="project",
+        target_id=str(project.id),
+        target_name=project.name,
+        ip=client_ip(request),
+        detail=f"接管自动发现的项目: {project.compose_project or project.name}",
+    )
+    db.commit()
+    db.refresh(project)
+    return _card(db, project)
+
+
+@router.post("/{project_id}/ignore", response_model=ProjectRead, summary="忽略自动发现的项目")
+def ignore_project(
+    project_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require("manage")),
+) -> ProjectRead:
+    """持久退出:保留项目记录,删除实例快照,后续采集不再同步。
+
+    不能删除记录 —— 删掉之后下一轮采集会把它当成新项目重新发现,
+    「忽略」就失去意义。
+    """
+    project = _get_project_or_404(db, project_id)
+    if project.lifecycle != "discovered":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="只有待接管的项目可以忽略")
+
+    project.lifecycle = "ignored"
+    db.execute(delete(Instance).where(Instance.project_id == project.id))
+
+    record_audit(
+        db,
+        user_id=actor.id,
+        username=actor.username,
+        action="ignore",
+        target_type="project",
+        target_id=str(project.id),
+        target_name=project.name,
+        ip=client_ip(request),
+        detail=f"忽略自动发现的项目: {project.compose_project or project.name}",
+    )
+    db.commit()
+    db.refresh(project)
+    return _card(db, project)
+
+
+@router.post("/{project_id}/restore", response_model=ProjectRead, summary="恢复已忽略的项目")
+def restore_project(
+    project_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require("manage")),
+) -> ProjectRead:
+    """把 ignored 项目恢复为 discovered,下一轮采集重新填充实例。"""
+    project = _get_project_or_404(db, project_id)
+    if project.lifecycle != "ignored":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="只有已忽略的项目可以恢复")
+
+    project.lifecycle = "discovered"
+
+    record_audit(
+        db,
+        user_id=actor.id,
+        username=actor.username,
+        action="restore",
+        target_type="project",
+        target_id=str(project.id),
+        target_name=project.name,
+        ip=client_ip(request),
+        detail=f"恢复已忽略的项目: {project.compose_project or project.name}",
+    )
+    db.commit()
+    db.refresh(project)
+    return _card(db, project)

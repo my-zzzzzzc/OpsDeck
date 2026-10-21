@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Event, Metric, Server
+from app.models import ContainerMetric, Event, Metric, Server
 
 logger = logging.getLogger(__name__)
 
@@ -229,14 +229,15 @@ def run_detection(db: Session) -> dict[str, int]:
 
 
 def cleanup_old_metrics(db: Session) -> int:
-    """删除超过保留期的指标数据,返回删除行数。
+    """删除超过保留期的服务器与容器指标,返回删除行数。
 
-    指标按采集间隔持续写入,不清理会无限增长。
+    指标按采集间隔持续写入,不清理会无限增长。两类指标共用同一保留期。
     """
     cutoff = datetime.now(UTC) - timedelta(days=settings.metric_retention_days)
-    result = db.execute(delete(Metric).where(Metric.captured_at < cutoff))
+    server_rows = db.execute(delete(Metric).where(Metric.captured_at < cutoff))
+    container_rows = db.execute(delete(ContainerMetric).where(ContainerMetric.captured_at < cutoff))
     db.commit()
-    return result.rowcount or 0
+    return (server_rows.rowcount or 0) + (container_rows.rowcount or 0)
 
 
 def cleanup_old_events(db: Session) -> int:

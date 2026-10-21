@@ -59,6 +59,15 @@ def _get_project_or_404(db: Session, project_id: uuid.UUID) -> Project:
     return project
 
 
+def _require_managed(project: Project) -> None:
+    """更新只针对已接管项目:未托管项目没有授权来源,也不应触发远端检查。"""
+    if project.lifecycle != "managed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="项目尚未接管,请先在项目页接管后再配置或检查更新",
+        )
+
+
 def _get_server(db: Session, project: Project) -> Server:
     server = db.get(Server, project.server_id)
     if server is None:
@@ -82,8 +91,10 @@ def _images_for(db: Session, project_id: uuid.UUID) -> list[str]:
 
 @router.get("", response_model=list[UpdateProjectRead], summary="项目的更新状态")
 def list_updates(db: Session = Depends(get_db), _: User = Depends(require("view"))) -> list[UpdateProjectRead]:
-    """返回全部项目及各自的更新配置。未配置的项目 config 为 null。"""
-    projects = list(db.scalars(select(Project).order_by(Project.name)))
+    """返回全部已接管项目及各自的更新配置。未配置的项目 config 为 null。"""
+    projects = list(
+        db.scalars(select(Project).where(Project.lifecycle == "managed").order_by(Project.name))
+    )
     servers = {server.id: server for server in db.scalars(select(Server))}
     configs = {config.project_id: config for config in db.scalars(select(ProjectUpdateConfig))}
 
@@ -135,6 +146,7 @@ def save_config(
 ) -> ProjectUpdateConfig:
     """保存并确认一个项目的更新来源。保存后需要手动检查一次。"""
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
 
     if payload.source_type == "git" and not project.work_dir:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Git 来源要求项目配置工作目录")
@@ -204,6 +216,7 @@ def detect_source(
 ) -> UpdateSuggestion:
     """只读探测:Git 远端 / 镜像上游 / Registry。结果不落库,需人工确认。"""
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
     server = _get_server(db, project)
     suggestion = detect_update_source(project, server, _images_for(db, project.id))
     return UpdateSuggestion(**suggestion)
@@ -217,6 +230,7 @@ def check_project(
 ) -> ProjectUpdateConfig:
     """执行一次只读检测,并把结果写回配置。检测失败也返回 200 + check_failed。"""
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
     config = _get_config(db, project.id)
     if config is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先配置更新来源")
@@ -260,6 +274,7 @@ def apply_update(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="执行更新需要显式确认")
 
     project = _get_project_or_404(db, project_id)
+    _require_managed(project)
     config = _get_config(db, project.id)
     if config is None or not config.confirmed:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先配置并确认更新来源")

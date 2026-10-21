@@ -1,15 +1,15 @@
-import { AlertTriangle, ArrowDownToLine, Pause, Play, Terminal, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowDownToLine, Pause, Play, RefreshCw, Terminal, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
-import { auth, type InstanceDetail } from '../api'
+import { auth } from '../api'
 import { cn } from '../cn'
 
 /*
- * 容器日志面板。
+ * 日志面板（项目级日志流）。
  *
- * 两条数据通道:
- *   打开时   —— REST 拉一段历史(since),把首屏铺满
- *   之后     —— WebSocket 接 `docker logs --follow` 实时追加
+ * 数据通道:
+ *   打开/切换范围 —— 重连 WebSocket，后端用一条 `--since X --follow` 命令
+ *                    同时回放历史和实时追加,不会出现重复行或中间缺口。
  *
  * 三个必须处理的细节:
  *
@@ -66,7 +66,15 @@ function LogAction({ children, onClick, label, pressed }: {
   )
 }
 
-export function ContainerLogPanel({ container }: { container: InstanceDetail }) {
+export function LogStreamPanel({ ariaLabel, streamUrl, liveNote, emptyText = '该时间范围内没有日志', className }: {
+  ariaLabel: string
+  /** 实时流地址，如 /ws/projects/1/logs；本组件会追加 since 查询参数。 */
+  streamUrl: string
+  /** 底部说明，例如跟随的命令或"容器未运行"。 */
+  liveNote: string
+  emptyText?: string
+  className?: string
+}) {
   const [lines, setLines] = useState<string[]>([])
   const [dropped, setDropped] = useState(0)
   const [range, setRange] = useState<RangeKey>('15m')
@@ -76,7 +84,6 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
   const [attempt, setAttempt] = useState(0)
 
   const bodyRef = useRef<HTMLDivElement>(null)
-  const wsRef = useRef<WebSocket | null>(null)
   const totalRef = useRef(0)
   const followingRef = useRef(true)
 
@@ -113,54 +120,31 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
     setDropped(0)
   }, [])
 
-  // 打开或切换时间范围:先拉一段历史
+  // 一条 WebSocket 同时负责历史回放与实时跟随:切换范围时重连,
+  // 避免 REST 快照与实时流之间出现重复或缺口。
   useEffect(() => {
-    let cancelled = false
     resetLines()
     setMessage(null)
-
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/containers/${container.id}/logs?since=${range}&tail=200`, {
-          headers: { Authorization: `Bearer ${auth.getToken() ?? ''}` },
-        })
-        if (!res.ok) {
-          const detail = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
-          throw new Error(detail.detail ?? `HTTP ${res.status}`)
-        }
-        const data = (await res.json()) as { lines: string[] }
-        if (cancelled) return
-        append(data.lines)
-        if (followingRef.current) requestAnimationFrame(() => scrollToBottom())
-      } catch (err) {
-        if (!cancelled) setMessage((err as Error).message)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [container.id, range, attempt, append, resetLines, scrollToBottom])
-
-  // 实时流。与时间范围无关,切换范围时不重连。
-  useEffect(() => {
     setStatus('connecting')
     const token = auth.getToken() ?? ''
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${window.location.host}/ws/containers/${container.id}/logs`
+    const url = `${proto}://${window.location.host}${streamUrl}?since=${range}`
 
     // 子协议携带 token:['bearer', token]
     const ws = new WebSocket(url, ['bearer', token])
-    wsRef.current = ws
 
-    ws.onopen = () => setStatus('live')
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data as string) as { type: string; text?: string; message?: string }
-        if (msg.type === 'line' && msg.text !== undefined) {
+        if (msg.type === 'ready') {
+          // 后端已经建立 SSH 流并开始回放,这时才算真正就绪。
+          setStatus('live')
+        } else if (msg.type === 'line' && msg.text !== undefined) {
           const stick = atBottom()
           append([msg.text])
           if (stick && followingRef.current) requestAnimationFrame(() => scrollToBottom())
+        } else if (msg.type === 'end') {
+          setStatus('closed')
         } else if (msg.type === 'error') {
           setStatus('error')
           setMessage(msg.message ?? '日志流异常')
@@ -174,18 +158,27 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
       // 4403 = 无权限;其余按断开处理
       if (ev.code === 4403) {
         setStatus('error')
-        setMessage(ev.reason || '只有管理员可以查看容器日志')
+        setMessage(ev.reason || '没有权限查看该日志')
+      } else if (ev.code === 4401) {
+        setStatus('error')
+        setMessage(ev.reason || '登录已过期，请重新登录')
+      } else if (ev.code === 1011) {
+        // 后端报告错误后会用 1011 关闭,错误内容走消息帧,这里别覆盖成"已断开"。
+        setStatus('error')
       } else if (ev.code !== 1000) {
         setStatus('closed')
       }
     }
 
     return () => {
-      wsRef.current = null
+      // StrictMode 下 effect 会立即卸载再挂载。被丢弃的这条连接如果还在握手,
+      // 关闭会触发 error 事件,把新连接的状态改写成"异常" —— 先摘掉回调再关。
+      ws.onmessage = null
+      ws.onerror = null
       ws.onclose = null
       ws.close()
     }
-  }, [container.id, attempt, atBottom, scrollToBottom, append])
+  }, [streamUrl, range, attempt, atBottom, scrollToBottom, append, resetLines])
 
   const retry = () => {
     setMessage(null)
@@ -200,8 +193,14 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
     closed: { dot: 'bg-ink-tertiary', text: '已断开' },
   }[status]
 
+  // 连接级失败(如 WS 到不了后端)没有服务端消息,不能退化成"没有日志",
+  // 否则用户会以为项目确实没输出。
+  const errorText = lines.length === 0
+    ? message ?? (status === 'error' ? '无法连接日志流,请确认服务可用后重试' : null)
+    : null
+
   return (
-    <section aria-label={`${container.name} 的日志`} className="flex min-h-[18rem] min-w-0 flex-1 flex-col border-t border-line xl:min-h-0">
+    <section aria-label={ariaLabel} className={cn('flex min-h-0 min-w-0 flex-1 flex-col', className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 border-b border-line px-4 py-2">
         <span className="flex items-center gap-1.5 text-[11px] font-medium text-ink-secondary">
           <Terminal className="size-3.5 text-ink-tertiary" />
@@ -261,6 +260,12 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
           <LogAction label="清空日志" onClick={resetLines}>
             <Trash2 className="size-3" />
           </LogAction>
+
+          {(status === 'closed' || status === 'error') && lines.length > 0 ? (
+            <LogAction label="重新连接" onClick={retry}>
+              <RefreshCw className="size-3" />
+            </LogAction>
+          ) : null}
         </div>
       </div>
 
@@ -272,11 +277,11 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
           if (event.deltaY < 0 && following) setFollowing(false)
         }}
       >
-        {message && lines.length === 0 ? (
+        {errorText ? (
           <div className="flex h-full min-h-44 flex-col items-center justify-center gap-2 px-6 py-8 text-center">
             <AlertTriangle className="size-5 text-ink-danger" />
             <p className="text-[12px] font-medium text-ink-secondary">日志暂不可用</p>
-            <p className="mono max-w-xl text-[11px] leading-relaxed break-words text-ink-tertiary">{message}</p>
+            <p className="mono max-w-xl text-[11px] leading-relaxed break-words text-ink-tertiary">{errorText}</p>
             <button
               type="button"
               onClick={retry}
@@ -297,7 +302,7 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
               <div className="flex h-full min-h-32 flex-col items-center justify-center gap-2 text-center">
                 <Terminal className="size-5 text-ink-tertiary" />
                 <p className="text-[12px] text-ink-tertiary">
-                  {status === 'live' ? '该时间范围内没有日志' : '正在读取…'}
+                  {status === 'connecting' ? '正在读取…' : emptyText}
                 </p>
               </div>
             ) : (
@@ -321,9 +326,7 @@ export function ContainerLogPanel({ container }: { container: InstanceDetail }) 
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-1.5 text-[10.5px] text-ink-tertiary">
         <span className="tabular-nums">{lines.length} 行</span>
         {dropped > 0 ? <span className="text-ink-warning">已省略 {dropped} 行</span> : null}
-        <span className="ms-auto">
-          {container.state === 'running' ? 'docker logs --follow' : '容器未运行，仅显示历史日志'}
-        </span>
+        <span className="ms-auto">{status === 'closed' ? '日志流已结束' : liveNote}</span>
       </div>
     </section>
   )

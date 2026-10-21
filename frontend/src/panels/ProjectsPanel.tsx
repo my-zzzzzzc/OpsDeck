@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  Boxes,
   ChevronRight,
   ExternalLink,
   FolderOpen,
@@ -30,6 +31,7 @@ import {
 import { cn } from '../cn'
 import { useHeaderMeta } from '../header-meta'
 import { Badge, Card, Empty, GhostButton, PrimaryButton, Skeleton } from '../ui'
+import { AdoptProjectDialog } from './AdoptProjectDialog'
 import { DeployDialog } from './DeployDialog'
 import { ProjectWorkspaceDialog } from './ProjectWorkspaceDialog'
 
@@ -81,6 +83,13 @@ const ACTION_ICON: Record<string, LucideIcon> = {
 const PROJECT_GRID =
   'grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3'
 
+const UNMANAGED_TABS = [
+  { key: 'discovered', label: '待接管' },
+  { key: 'ignored', label: '已忽略' },
+] as const
+
+type UnmanagedTab = (typeof UNMANAGED_TABS)[number]['key']
+
 /** 操作历史一次只取最近这些条,按钮计数超过它时显示「N+」。 */
 const HISTORY_LIMIT = 20
 
@@ -108,6 +117,108 @@ function ProjectCardSkeleton() {
         <Skeleton className="h-5 w-24" />
       </div>
     </Card>
+  )
+}
+
+/** 未托管列表的骨架:与紧凑行同高,压住加载时的空白。 */
+function UnmanagedSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="正在加载未托管项目">
+      {[0, 1, 2].map((index) => (
+        <div key={index} className="border-b border-line px-3 py-2.5 last:border-0">
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="mt-2 h-2.5 w-64 max-w-full" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function UnmanagedRow({
+  project,
+  serverName,
+  busy,
+  isAdmin,
+  onAdopt,
+  onIgnore,
+  onRestore,
+}: {
+  project: Project
+  serverName: string | null
+  busy: boolean
+  isAdmin: boolean
+  onAdopt: () => void
+  onIgnore: () => void
+  onRestore: () => void
+}) {
+  const location = project.work_dir
+    ? `${project.work_dir}${project.compose_file ? ` / ${project.compose_file}` : ''}`
+    : null
+  const composeName =
+    project.compose_project && project.compose_project !== project.name ? project.compose_project : null
+
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2.5 last:border-0">
+      <div className="min-w-0 flex-1 basis-64">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="truncate text-[12.5px] font-medium text-ink" title={project.name}>
+            {project.name}
+          </span>
+          {composeName ? (
+            <span className="min-w-0 truncate text-[10px] text-ink-tertiary" title={`Compose 项目:${composeName}`}>
+              Compose · {composeName}
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-tertiary">
+          <span className="flex min-w-0 items-center gap-1">
+            <ServerIcon className="size-3 shrink-0" />
+            <span className="truncate" title={serverName ?? undefined}>
+              {serverName ?? '—'}
+            </span>
+          </span>
+          {location ? (
+            <span className="mono min-w-0 max-w-full truncate" title={location}>
+              {location}
+            </span>
+          ) : null}
+          {project.container_count != null ? (
+            <span className="tnum">{project.container_count} 个容器</span>
+          ) : null}
+          {project.last_seen_at ? <span>最近采集 {formatWhen(project.last_seen_at)}</span> : null}
+        </div>
+      </div>
+
+      {isAdmin ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          {project.lifecycle === 'discovered' ? (
+            <>
+              <GhostButton onClick={onAdopt} disabled={busy} title="接管后纳入管理与更新">
+                接管
+              </GhostButton>
+              <GhostButton onClick={onIgnore} disabled={busy} title="停止采集并移出待接管列表">
+                {busy ? <Loader2 className="size-3 animate-spin" /> : null}
+                忽略
+              </GhostButton>
+            </>
+          ) : (
+            <GhostButton onClick={onRestore} disabled={busy} title="恢复到待接管列表">
+              {busy ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <RotateCcw className="size-3" />
+              )}
+              恢复
+            </GhostButton>
+          )}
+        </div>
+      ) : (
+        <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-ink-tertiary">
+          <Lock className="size-3" />
+          只读
+        </span>
+      )}
+    </li>
   )
 }
 
@@ -404,6 +515,19 @@ export function ProjectsPanel({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [logsError, setLogsError] = useState<string | null>(null)
 
+  // 未托管项目独立加载:它失败不该把已接管项目网格一起打成空态。
+  const [unmanaged, setUnmanaged] = useState<Record<UnmanagedTab, Project[]>>({
+    discovered: [],
+    ignored: [],
+  })
+  const [unmanagedTab, setUnmanagedTab] = useState<UnmanagedTab>('discovered')
+  const [unmanagedLoading, setUnmanagedLoading] = useState(true)
+  const [unmanagedLoaded, setUnmanagedLoaded] = useState(false)
+  const [unmanagedError, setUnmanagedError] = useState<string | null>(null)
+  const [unmanagedBusy, setUnmanagedBusy] = useState<string | null>(null)
+  const [unmanagedMsg, setUnmanagedMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const [adopting, setAdopting] = useState<Project | null>(null)
+
   // 部署需要 manage 权限,仅管理员可见;viewer / operator 仍可执行白名单操作
   const isAdmin = user.role === 'admin'
   const canOperate = isAdmin || user.role === 'operator'
@@ -438,9 +562,72 @@ export function ProjectsPanel({
     }
   }, [])
 
+  const reloadUnmanaged = useCallback(async () => {
+    setUnmanagedLoading(true)
+    setUnmanagedError(null)
+    try {
+      const [discovered, ignored] = await Promise.allSettled([
+        api.projects(undefined, 'discovered'),
+        api.projects(undefined, 'ignored'),
+      ])
+      if (discovered.status === 'fulfilled') {
+        setUnmanaged((previous) => ({ ...previous, discovered: discovered.value }))
+      }
+      if (ignored.status === 'fulfilled') {
+        setUnmanaged((previous) => ({ ...previous, ignored: ignored.value }))
+      }
+      const problems = [discovered, ignored].flatMap((result) =>
+        result.status === 'rejected' ? [(result.reason as Error).message] : [],
+      )
+      if (problems.length > 0) setUnmanagedError(problems.join(';'))
+    } finally {
+      setUnmanagedLoading(false)
+      setUnmanagedLoaded(true)
+    }
+  }, [])
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([reload(), reloadUnmanaged()])
+  }, [reload, reloadUnmanaged])
+
   useEffect(() => {
     void reload()
-  }, [reload])
+    void reloadUnmanaged()
+  }, [reload, reloadUnmanaged])
+
+  const ignoreProject = async (project: Project) => {
+    const ok = confirm(
+      `忽略「${project.name}」？\n\n忽略后不会自动重新出现,恢复前不再采集它的容器;已有的容器快照会被删除。`,
+    )
+    if (!ok) return
+
+    setUnmanagedBusy(project.id)
+    setUnmanagedMsg(null)
+    try {
+      await api.ignoreProject(project.id)
+      setUnmanagedMsg({ text: `已忽略「${project.name}」,可在「已忽略」中恢复。`, ok: true })
+      await refreshAll()
+    } catch (err) {
+      setUnmanagedMsg({ text: `忽略失败：${(err as Error).message}`, ok: false })
+    } finally {
+      setUnmanagedBusy(null)
+    }
+  }
+
+  const restoreProject = async (project: Project) => {
+    setUnmanagedBusy(project.id)
+    setUnmanagedMsg(null)
+    try {
+      await api.restoreProject(project.id)
+      setUnmanagedTab('discovered')
+      setUnmanagedMsg({ text: `已恢复「${project.name}」,下一轮采集会重新读取容器。`, ok: true })
+      await refreshAll()
+    } catch (err) {
+      setUnmanagedMsg({ text: `恢复失败：${(err as Error).message}`, ok: false })
+    } finally {
+      setUnmanagedBusy(null)
+    }
+  }
 
   const run = async (project: Project, action: ActionCatalogItem) => {
     if (action.confirm_required) {
@@ -509,6 +696,8 @@ export function ProjectsPanel({
   // 数量交给页头,内容区不再重复「项目」这个页面名
   useHeaderMeta(projects.length > 0 ? `${projects.length} 个` : null)
 
+  const unmanagedRows = unmanaged[unmanagedTab]
+
   return (
     <>
       <div className="mb-3 flex items-center justify-end gap-1.5">
@@ -521,9 +710,9 @@ export function ProjectsPanel({
             ) : null}
           </span>
         </GhostButton>
-        <GhostButton onClick={() => void reload()} disabled={loading}>
+        <GhostButton onClick={() => void refreshAll()} disabled={loading}>
           <span className="flex items-center gap-1.5">
-            <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
+            <RefreshCw className={cn('size-3', (loading || unmanagedLoading) && 'animate-spin')} />
             {loading ? '加载中' : '刷新'}
           </span>
         </GhostButton>
@@ -556,16 +745,16 @@ export function ProjectsPanel({
             </div>
           </Card>
         ) : projects.length === 0 ? (
-          <Card className="py-12 text-center">
-            <Rocket className="mx-auto mb-2 size-6 text-ink-tertiary" />
-            <p className="text-[13px] text-ink-secondary">还没有登记项目</p>
-            <p className="mx-auto mt-1 max-w-md text-[11.5px] text-ink-tertiary">
-              通过「新建部署」接管服务器上已有的 Compose 项目,或从 Git 克隆一个新项目。
-            </p>
+          <Card padded={false} className="flex flex-wrap items-center gap-3 px-4 py-5">
+            <Rocket className="size-5 shrink-0 text-ink-tertiary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[12.5px] text-ink-secondary">还没有已接管的项目</p>
+              <p className="mt-0.5 text-[11px] text-ink-tertiary">
+                采集器发现的 Compose 栈可在下方「未托管项目」中接管,也可以直接从 Git 新建部署。
+              </p>
+            </div>
             {isAdmin ? (
-              <div className="mt-4 flex justify-center">
-                <PrimaryButton onClick={() => setDeployOpen(true)}>新建部署</PrimaryButton>
-              </div>
+              <PrimaryButton onClick={() => setDeployOpen(true)}>新建部署</PrimaryButton>
             ) : null}
           </Card>
         ) : (
@@ -735,15 +924,6 @@ export function ProjectsPanel({
         )}
       </section>
 
-      {workspace ? (
-        <ProjectWorkspaceDialog
-          project={workspace}
-          user={user}
-          catalog={catalog}
-          onClose={() => setWorkspace(null)}
-        />
-      ) : null}
-
       {msg ? (
         <div
           role="status"
@@ -756,6 +936,129 @@ export function ProjectsPanel({
         >
           {msg.text}
         </div>
+      ) : null}
+
+      <section className="mb-5" aria-labelledby="unmanaged-heading">
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h2 id="unmanaged-heading" className="text-[12.5px] font-semibold text-ink">
+                未托管项目
+              </h2>
+              <span className="text-[10.5px] text-ink-tertiary">采集自动发现 · 只读</span>
+              {unmanagedLoading ? (
+                <Loader2 className="size-3 animate-spin text-ink-tertiary" aria-label="正在刷新未托管项目" />
+              ) : null}
+            </div>
+            <p className="mt-0.5 text-[11px] text-ink-tertiary">
+              接管只登记资产,不重启容器;接管后才会参与部署、更新、操作和告警。
+            </p>
+          </div>
+          <div
+            className="flex flex-wrap items-center gap-1"
+            role="group"
+            aria-label="未托管项目筛选"
+          >
+            {UNMANAGED_TABS.map((tab) => {
+              const active = unmanagedTab === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setUnmanagedTab(tab.key)}
+                  aria-pressed={active}
+                  className={cn(
+                    'flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-[11px] transition-colors',
+                    active
+                      ? 'border-line-strong bg-overlay-light font-medium text-ink'
+                      : 'border-line bg-primary text-ink-secondary hover:bg-overlay-lighter',
+                  )}
+                >
+                  {tab.label}
+                  <span className="tnum text-[10px] text-ink-tertiary">
+                    {unmanagedLoaded ? unmanaged[tab.key].length : '…'}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {unmanagedMsg ? (
+          <div
+            role="status"
+            className={cn(
+              'mb-2 rounded-md border px-3 py-1.5 text-[11px]',
+              unmanagedMsg.ok
+                ? 'border-line bg-tint-success text-ink-success'
+                : 'border-line-danger bg-tint-danger text-ink-danger',
+            )}
+          >
+            {unmanagedMsg.text}
+          </div>
+        ) : null}
+
+        <Card padded={false} className="overflow-hidden">
+          {!unmanagedLoaded ? (
+            <UnmanagedSkeleton />
+          ) : unmanagedError ? (
+            <div className="flex flex-wrap items-center gap-2 px-3 py-3">
+              <p className="min-w-0 flex-1 text-[11.5px] break-words text-ink-danger">
+                未托管项目加载失败：{unmanagedError}
+              </p>
+              <GhostButton onClick={() => void reloadUnmanaged()}>重试</GhostButton>
+            </div>
+          ) : unmanagedRows.length === 0 ? (
+            <div className="flex items-center gap-2.5 px-4 py-5">
+              <Boxes className="size-4 shrink-0 text-ink-tertiary" />
+              <div className="min-w-0">
+                <p className="text-[12px] text-ink-secondary">
+                  {unmanagedTab === 'discovered' ? '暂无待接管的 Compose 项目' : '暂无已忽略的项目'}
+                </p>
+                <p className="mt-0.5 text-[10.5px] text-ink-tertiary">
+                  {unmanagedTab === 'discovered'
+                    ? '在服务器上部署新的 Compose 栈后,会自动出现在这里。'
+                    : '忽略的项目会保留在此,随时可以恢复。'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <ul>
+              {unmanagedRows.map((project) => (
+                <UnmanagedRow
+                  key={project.id}
+                  project={project}
+                  serverName={project.server_name ?? serverNames[project.server_id] ?? null}
+                  busy={unmanagedBusy === project.id}
+                  isAdmin={isAdmin}
+                  onAdopt={() => setAdopting(project)}
+                  onIgnore={() => void ignoreProject(project)}
+                  onRestore={() => void restoreProject(project)}
+                />
+              ))}
+            </ul>
+          )}
+        </Card>
+      </section>
+
+      {workspace ? (
+        <ProjectWorkspaceDialog
+          project={workspace}
+          user={user}
+          catalog={catalog}
+          onClose={() => setWorkspace(null)}
+        />
+      ) : null}
+
+      {adopting ? (
+        <AdoptProjectDialog
+          project={adopting}
+          onClose={() => setAdopting(null)}
+          onAdopted={async (adopted) => {
+            setUnmanagedMsg({ text: `已接管「${adopted.name}」,现在可部署、更新与操作。`, ok: true })
+            await refreshAll()
+          }}
+        />
       ) : null}
 
       {historyOpen ? (
@@ -771,7 +1074,7 @@ export function ProjectsPanel({
       ) : null}
 
       {deployOpen ? (
-        <DeployDialog onClose={() => setDeployOpen(false)} onDeployed={reload} />
+        <DeployDialog onClose={() => setDeployOpen(false)} onDeployed={refreshAll} />
       ) : null}
     </>
   )

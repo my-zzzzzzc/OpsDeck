@@ -34,6 +34,13 @@ class ActionExecutePayload(BaseModel):
     )
 
 
+class ContainerActionPayload(BaseModel):
+    """单容器操作请求。只接受动作名,容器由 URL 指定。"""
+
+    action: str = Field(max_length=32, description="container_restart / container_stop / container_start")
+    confirm: bool = Field(default=False, description="需要确认的操作必须传 true")
+
+
 class ActionLogRead(BaseModel):
     """操作记录读取模型。"""
 

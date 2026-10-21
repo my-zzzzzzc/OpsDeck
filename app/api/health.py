@@ -19,9 +19,11 @@ def health() -> dict[str, str]:
 
 @router.get("/overview", summary="总览统计")
 def overview(db: Session = Depends(get_db), _: User = Depends(require("view"))) -> dict[str, int]:
-    """返回资产总量统计,供看板顶部展示。"""
+    """返回资产总量统计,供看板顶部展示。项目只统计已接管的,未托管资产不算在内。"""
     server_total = db.scalar(select(func.count()).select_from(Server)) or 0
-    project_total = db.scalar(select(func.count()).select_from(Project)) or 0
+    project_total = (
+        db.scalar(select(func.count()).select_from(Project).where(Project.lifecycle == "managed")) or 0
+    )
     online_total = db.scalar(select(func.count()).select_from(Server).where(Server.status == "online")) or 0
 
     return {

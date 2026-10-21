@@ -31,6 +31,7 @@ from app.deploy import (
     normalize_spec,
     run_preflight,
 )
+from app.discovery import normalized_work_dir
 from app.executor import execute
 from app.models import ActionLog, Project, ProjectUpdateConfig, Server, User
 from app.schemas.assets import ProjectRead
@@ -84,9 +85,41 @@ def _parse_name(value: str) -> str:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
-def _name_taken(db: Session, server_id: uuid.UUID, name: str) -> bool:
-    stmt = select(Project.id).where(Project.server_id == server_id, Project.name == name)
-    return db.scalar(stmt) is not None
+def _project_with_name(db: Session, server_id: uuid.UUID, name: str) -> Project | None:
+    return db.scalar(select(Project).where(Project.server_id == server_id, Project.name == name))
+
+
+def _name_conflict_detail(project: Project) -> str:
+    """同名冲突按生命周期给出不同的下一步,而不是笼统的「已存在」。"""
+    if project.lifecycle == "discovered":
+        return f"该服务器下存在同名未托管项目「{project.name}」,请先在项目页接管"
+    if project.lifecycle == "ignored":
+        return f"同名项目「{project.name}」已忽略,请先在项目页恢复并接管"
+    return f"该服务器下项目名已存在: {project.name}"
+
+
+def _project_with_work_dir(db: Session, server_id: uuid.UUID, work_dir: str) -> Project | None:
+    """同一工作目录只允许一条项目记录,避免同栈出现两个资产。"""
+    key = normalized_work_dir(work_dir)
+    if key is None:
+        return None
+    candidates = db.scalars(
+        select(Project).where(
+            Project.server_id == server_id,
+            Project.lifecycle.in_(("managed", "discovered")),
+            Project.work_dir.is_not(None),
+        )
+    )
+    for project in candidates:
+        if normalized_work_dir(project.work_dir) == key:
+            return project
+    return None
+
+
+def _work_dir_conflict_detail(project: Project) -> str:
+    if project.lifecycle == "discovered":
+        return f"工作目录已由未托管项目「{project.name}」使用,请先在项目页接管"
+    return f"工作目录已被项目「{project.name}」使用"
 
 
 @router.post("/preflight", response_model=DeployPreflightRead, summary="部署前检查")
@@ -101,13 +134,22 @@ def preflight(
     spec = _parse_spec(payload)
 
     checks: list[DeployCheck] = []
-    taken = _name_taken(db, server.id, name)
+    taken = _project_with_name(db, server.id, name)
     checks.append(
         DeployCheck(
             key="name",
             label="项目名",
-            ok=not taken,
-            detail=f"该服务器下已有同名项目:{name}" if taken else f"可以使用:{name}",
+            ok=taken is None,
+            detail=_name_conflict_detail(taken) if taken is not None else f"可以使用:{name}",
+        )
+    )
+    dir_taken = _project_with_work_dir(db, server.id, spec.work_dir)
+    checks.append(
+        DeployCheck(
+            key="work_dir",
+            label="工作目录",
+            ok=dir_taken is None,
+            detail=_work_dir_conflict_detail(dir_taken) if dir_taken is not None else f"可以使用:{spec.work_dir}",
         )
     )
     checks.extend(
@@ -141,8 +183,12 @@ def deploy(
     name = _parse_name(payload.name)
     spec = _parse_spec(payload)
 
-    if _name_taken(db, server.id, name):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"该服务器下项目名已存在: {name}")
+    taken = _project_with_name(db, server.id, name)
+    if taken is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_name_conflict_detail(taken))
+    dir_taken = _project_with_work_dir(db, server.id, spec.work_dir)
+    if dir_taken is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_work_dir_conflict_detail(dir_taken))
 
     lock = _lock_for(server.id, spec.work_dir)
     if not lock.acquire(blocking=False):
@@ -155,8 +201,12 @@ def deploy(
             detail = "部署前检查未通过:" + "; ".join(f"{check.label} - {check.detail}" for check in failed[:4])
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
-        if _name_taken(db, server.id, name):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"该服务器下项目名已存在: {name}")
+        taken = _project_with_name(db, server.id, name)
+        if taken is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_name_conflict_detail(taken))
+        dir_taken = _project_with_work_dir(db, server.id, spec.work_dir)
+        if dir_taken is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_work_dir_conflict_detail(dir_taken))
 
         command = build_deploy_command(spec)
         log = ActionLog(
@@ -190,12 +240,13 @@ def deploy(
 
         if not result.ok:
             message = f"部署失败(退出码 {result.exit_code}),请查看输出"
-        elif _name_taken(db, server.id, name):
-            message = "部署命令已完成,但同名项目已存在,未自动登记;请确认容器与项目列表"
+        elif (taken := _project_with_name(db, server.id, name)) is not None:
+            message = f"部署命令已完成,但{_name_conflict_detail(taken)},未自动登记;请确认容器与项目列表"
         else:
             project = Project(
                 server_id=server.id,
                 name=name,
+                lifecycle="managed",
                 kind="docker-compose",
                 work_dir=spec.work_dir,
                 compose_file=spec.compose_file,

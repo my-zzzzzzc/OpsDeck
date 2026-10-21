@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -86,13 +87,31 @@ class Project(Base, TimestampMixin):
     """
 
     __tablename__ = "projects"
-    __table_args__ = (UniqueConstraint("server_id", "name", name="uq_projects_server_name"),)
+    __table_args__ = (
+        UniqueConstraint("server_id", "name", name="uq_projects_server_name"),
+        # compose_project 是采集匹配键:同一服务器内一个 Compose 栈只能对应一条项目。
+        Index(
+            "uq_projects_server_compose",
+            "server_id",
+            "compose_project",
+            unique=True,
+            postgresql_where=text("compose_project IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     server_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # managed / discovered / ignored。发现的项目只读,接管后才参与操作、更新与告警。
+    lifecycle: Mapped[str] = mapped_column(
+        String(16), default="managed", server_default="managed", nullable=False
+    )
+    # Docker Compose 标签里的项目名,与显示名解耦;为空表示尚未学习到。
+    compose_project: Mapped[str | None] = mapped_column(String(64))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # docker-compose / docker / systemd / binary
     kind: Mapped[str] = mapped_column(String(32), default="docker-compose", server_default="docker-compose")
@@ -182,13 +201,33 @@ class Instance(Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     image: Mapped[str | None] = mapped_column(String(255))
+    # 镜像的 registry digest(sha256:...),本地构建的镜像没有该值。
+    image_digest: Mapped[str | None] = mapped_column(String(128))
     state: Mapped[str | None] = mapped_column(String(32))
     health: Mapped[str | None] = mapped_column(String(32))
+    # 最近一次健康检查的输出,已脱敏截断;不健康时用于直接定位失败原因。
+    health_detail: Mapped[str | None] = mapped_column(Text)
+    # Docker Compose 的一次性任务标签(com.docker.compose.oneoff)。
+    # 普通 service 主动停止时也会退出,不能靠名称或退出码猜成"已完成"。
+    one_off: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     exit_code: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 崩溃排障:容器重启次数、最近一次退出是否由 OOM 引起、最近一次退出时间。
+    # 旧采集器不上报,保持 None;前端把 None 渲染为「—」。
+    restart_count: Mapped[int | None] = mapped_column(Integer)
+    oom_killed: Mapped[bool | None] = mapped_column(Boolean)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     mem_used_mb: Mapped[int | None] = mapped_column(Integer)
     mem_limit_mb: Mapped[int | None] = mapped_column(Integer)
+
+    # [{"host": 8090, "container": 80, "proto": "tcp"}],来自容器运行配置而非项目登记
+    ports: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    # [{"type": "bind", "source": "/opt/app", "destination": "/app", "readonly": false}]
+    mounts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    # 仅键名,绝不保存环境变量的值
+    env_keys: Mapped[list[str] | None] = mapped_column(JSONB)
+    restart_policy: Mapped[str | None] = mapped_column(String(64))
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -223,6 +262,31 @@ class Metric(Base):
     load_1: Mapped[float | None] = mapped_column(Float)
     load_5: Mapped[float | None] = mapped_column(Float)
     load_15: Mapped[float | None] = mapped_column(Float)
+
+
+class ContainerMetric(Base):
+    """容器资源指标快照。
+
+    只记录运行中的容器:CPU 为整机占比(0-100),网络与块 IO 为字节/秒。
+    采集器第一帧没有速率基线,对应列为空,前端画成缺口而不是 0。
+    """
+
+    __tablename__ = "container_metrics"
+    __table_args__ = (Index("ix_container_metrics_instance_captured", "instance_id", "captured_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    instance_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("instances.id", ondelete="CASCADE"), nullable=False
+    )
+
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    cpu_percent: Mapped[float | None] = mapped_column(Float)
+    mem_used_mb: Mapped[int | None] = mapped_column(Integer)
+    net_rx_bps: Mapped[float | None] = mapped_column(Float)
+    net_tx_bps: Mapped[float | None] = mapped_column(Float)
+    block_read_bps: Mapped[float | None] = mapped_column(Float)
+    block_write_bps: Mapped[float | None] = mapped_column(Float)
 
 
 class Event(Base):

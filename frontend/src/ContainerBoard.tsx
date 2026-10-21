@@ -8,16 +8,26 @@ import { Card } from './ui'
 /** 容器在概览和容器页共用的展示分类。 */
 export type ContainerBucket = 'running' | 'unhealthy' | 'stopped' | 'done'
 
-/** 一次性初始化任务退出属于正常生命周期，不应作为异常提示。 */
-export function isOneShot(name: string): boolean {
-  const lowered = name.toLowerCase()
-  return ['init', 'migrat', 'setup', 'provision'].some((marker) => lowered.includes(marker))
+const ONE_SHOT_MARKERS = ['init', 'migrat', 'setup', 'provision']
+
+/** 一次性初始化任务退出属于正常生命周期，不应作为异常提示。
+ *
+ * docker compose run 创建的容器带 oneoff 标签，这是权威信号；普通 service
+ * （包括名字里带 setup 的常驻服务）被人工停止时不能算完成。旧采集器没有标签
+ * 与准确退出码，此时保留名称启发式作为历史数据兜底。
+ */
+export function isOneShot(container: InstanceDetail): boolean {
+  if (container.one_off) return true
+  const policy = (container.restart_policy ?? '').trim().toLowerCase()
+  if (policy !== '' && policy !== 'no') return false
+  if (container.exit_code !== 0) return false
+  return ONE_SHOT_MARKERS.some((marker) => container.name.toLowerCase().includes(marker))
 }
 
 export function bucketOf(container: InstanceDetail): ContainerBucket {
   const state = (container.state ?? '').toLowerCase()
   const health = (container.health ?? '').toLowerCase()
-  if (state !== 'running') return isOneShot(container.name) ? 'done' : 'stopped'
+  if (state !== 'running') return isOneShot(container) ? 'done' : 'stopped'
   return health === 'unhealthy' ? 'unhealthy' : 'running'
 }
 

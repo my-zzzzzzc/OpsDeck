@@ -12,6 +12,7 @@
 """
 
 import logging
+import re
 import shlex
 from dataclasses import dataclass
 
@@ -116,6 +117,53 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
 }
 
 
+# ---------------------------------------------------------------- 容器级操作
+#
+# 单容器操作与项目级操作分开维护:容器名会直接进入命令,必须走白名单字符校验;
+# 动作也只保留重启/停止/启动 —— 升级仍走项目级 compose,避免绕过编排。
+CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
+
+
+@dataclass(frozen=True)
+class ContainerActionSpec:
+    """一个单容器操作的定义。verb 是固定的 Docker 子命令,不接受外部输入。"""
+
+    key: str
+    label: str
+    verb: str
+    danger: str
+    confirm_required: bool
+    description: str
+
+
+CONTAINER_ACTION_CATALOG: dict[str, ContainerActionSpec] = {
+    "container_restart": ContainerActionSpec(
+        key="container_restart",
+        label="重启容器",
+        verb="restart",
+        danger="low",
+        confirm_required=False,
+        description="只重启这一个容器,同项目的其它服务不受影响。",
+    ),
+    "container_stop": ContainerActionSpec(
+        key="container_stop",
+        label="停止容器",
+        verb="stop",
+        danger="medium",
+        confirm_required=True,
+        description="只停止这一个容器。若被其它服务依赖,相关调用会立即失败。",
+    ),
+    "container_start": ContainerActionSpec(
+        key="container_start",
+        label="启动容器",
+        verb="start",
+        danger="low",
+        confirm_required=False,
+        description="启动这一个已停止的容器,不重建也不更新镜像。",
+    ),
+}
+
+
 def get_catalog() -> list[dict]:
     """返回操作目录,供前端渲染可用操作。"""
     return [
@@ -176,3 +224,21 @@ def validate(spec_key: str, project: Project, *, confirm: bool) -> ActionSpec:
         raise ActionRejected(f"项目 {project.name} 未配置工作目录")
 
     return spec
+
+
+def validate_container_action(spec_key: str, *, confirm: bool) -> ContainerActionSpec:
+    """校验单容器操作是否允许执行。"""
+    spec = CONTAINER_ACTION_CATALOG.get(spec_key)
+    if spec is None:
+        raise ActionRejected(f"未定义的容器操作: {spec_key}")
+    if spec.confirm_required and not confirm:
+        raise ActionRejected(f"操作「{spec.label}」需要显式确认")
+    return spec
+
+
+def build_container_command(spec: ContainerActionSpec, name: str, *, use_sudo: bool) -> str:
+    """构造单容器命令。动作来自固定目录,容器名必须通过白名单字符校验。"""
+    if not CONTAINER_NAME_RE.match(name):
+        raise ActionRejected("容器名包含非法字符,无法执行操作")
+    prefix = "sudo -n " if use_sudo else ""
+    return f"{prefix}docker {spec.verb} {name}"

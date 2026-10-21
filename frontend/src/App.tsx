@@ -10,7 +10,7 @@ import {
   type User,
 } from './api'
 import { CHART_TIMES, type ChartPoint, type ChartTime } from './charts'
-import { ContainerBoard } from './ContainerBoard'
+import { bucketOf, ContainerBoard } from './ContainerBoard'
 import { DashboardHero, TrendCard } from './dashboard'
 import { Card, GhostButton, IconButton, PageHeader } from './ui'
 import { AuditPanel } from './panels/AuditPanel'
@@ -297,11 +297,14 @@ function Dashboard({
   const metric = host ? latestByServer.get(host.id) : undefined
   const hostEvents = unackedEvents.filter((e) => e.server_id === host?.id)
 
-  // 部署机自己的容器读数。bad = 非 running 或 health 为 unhealthy
+  // 部署机自己的容器读数。bad 口径与容器状态卡一致：不健康或异常停止。
   const hostContainers = (() => {
     const mine = containers.filter((c) => c.server_id === host?.id)
     const running = mine.filter((c) => c.state === 'running').length
-    const bad = mine.filter((c) => c.state !== 'running' || c.health === 'unhealthy').length
+    const bad = mine.filter((c) => {
+      const bucket = bucketOf(c)
+      return bucket === 'unhealthy' || bucket === 'stopped'
+    }).length
     return { total: mine.length, running, bad }
   })()
 

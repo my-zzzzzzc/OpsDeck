@@ -15,11 +15,13 @@ from app.api import (
     audit,
     auth,
     chat,
+    container_actions,
     container_logs,
     deployments,
     dify_tools,
     health,
     observability,
+    project_logs,
     projects,
     servers,
     terminal,
@@ -94,6 +96,8 @@ def create_app() -> FastAPI:
 
     # 白名单操作
     app.include_router(actions.router, prefix="/api")
+    # 单容器操作(operator/admin):重启 / 停止 / 启动
+    app.include_router(container_actions.router, prefix="/api")
 
     # Web 终端(仅管理员,需逐台授权)
     app.include_router(terminal.router, prefix="/api")
@@ -102,6 +106,10 @@ def create_app() -> FastAPI:
     # 容器日志(仅管理员):一次性回放 + 实时流
     app.include_router(container_logs.router, prefix="/api")
     app.add_api_websocket_route("/ws/containers/{instance_id}/logs", container_logs.container_logs_websocket)
+
+    # 项目日志(operator/admin):整个 Compose 项目的回放与实时流
+    app.include_router(project_logs.router, prefix="/api")
+    app.add_api_websocket_route("/ws/projects/{project_id}/logs", project_logs.project_logs_websocket)
 
     _mount_frontend(app)
     return app

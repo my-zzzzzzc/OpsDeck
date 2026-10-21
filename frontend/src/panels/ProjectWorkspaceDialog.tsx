@@ -1,17 +1,17 @@
-import { Boxes, FileCode2, FileText, History, Layers3, Save, Server as ServerIcon, Settings2, X } from 'lucide-react'
+import { Boxes, FileCode2, History, Layers3, Save, Server as ServerIcon, Settings2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { api, DANGER_LABEL, type ActionCatalogItem, type ActionLogItem, type InstanceDetail, type Project, type ProjectConfig, type User } from '../api'
 import { cn } from '../cn'
+import { portLabel, restartPolicyLabel } from '../container-runtime'
 import { Badge } from '../ui'
 import { ProjectLogDialog } from './ProjectLogDialog'
 
-type Tab = 'overview' | 'services' | 'logs' | 'config' | 'history'
+type Tab = 'overview' | 'services' | 'config' | 'history'
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Layers3 }> = [
   { id: 'overview', label: '概览', icon: Layers3 },
   { id: 'services', label: '容器', icon: Boxes },
-  { id: 'logs', label: '日志', icon: FileText },
   { id: 'config', label: '配置', icon: Settings2 },
   { id: 'history', label: '操作记录', icon: History },
 ]
@@ -47,10 +47,11 @@ export function ProjectWorkspaceDialog({ project, user, catalog, onClose, initia
     }).catch((err: Error) => setConfigError(err.message))
   }, [tab, canManage, config, project.id])
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    // 日志浮窗叠在工作区上方时,Escape 只应关闭浮窗。
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !showLogs) onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, showLogs])
 
   const saveConfig = async () => {
     setSaving(true); setConfigError(null)
@@ -78,11 +79,10 @@ export function ProjectWorkspaceDialog({ project, user, catalog, onClose, initia
             {message ? <p className="mb-3 rounded-md bg-tint-success px-3 py-2 text-[11px] text-ink-success">{message}</p> : null}
             {tab === 'overview' ? <Overview project={project} instances={instances} /> : null}
             {tab === 'services' ? <Services project={project} instances={instances} focusId={focusInstanceId} /> : null}
-            {tab === 'logs' ? <div className="flex h-full flex-col items-center justify-center text-center"><FileText className="mb-3 size-7 text-ink-tertiary" /><p className="text-[13px] text-ink-secondary">查看项目内全部服务的最近日志</p><button type="button" onClick={() => setShowLogs(true)} className="mt-3 h-8 cursor-pointer rounded-md border border-line px-3 text-[11px] text-ink-secondary hover:bg-overlay-light">打开日志浮窗</button></div> : null}
             {tab === 'config' ? <Config project={project} canManage={canManage} config={config} error={configError} compose={compose} env={env} saving={saving} onCompose={setCompose} onEnv={setEnv} onSave={() => void saveConfig()} /> : null}
             {tab === 'history' ? <HistoryList history={history} /> : null}
           </main>
-          <footer className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-4 py-2"><span className="me-1 text-[10px] text-ink-tertiary">项目级操作</span><button type="button" onClick={() => setShowLogs(true)} className="h-7 cursor-pointer rounded-md border border-line px-2 text-[10.5px] text-ink-secondary hover:bg-overlay-light">查看日志</button>{user.role !== 'viewer' ? catalog.filter((action) => action.enabled && !action.read_only).map((action) => <button key={action.key} type="button" onClick={() => void run(action)} className={cn('h-7 cursor-pointer rounded-md border px-2 text-[10.5px]', action.danger === 'medium' ? 'border-line-danger/60 text-ink-danger hover:bg-tint-danger' : 'border-line text-ink-secondary hover:bg-overlay-light')}>{action.label}</button>) : null}</footer>
+          <footer className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-4 py-2"><span className="me-1 text-[10px] text-ink-tertiary">项目级操作</span>{user.role !== 'viewer' ? <button type="button" onClick={() => setShowLogs(true)} className="h-7 cursor-pointer rounded-md border border-line px-2 text-[10.5px] text-ink-secondary hover:bg-overlay-light">查看日志</button> : null}{user.role !== 'viewer' ? catalog.filter((action) => action.enabled && !action.read_only).map((action) => <button key={action.key} type="button" onClick={() => void run(action)} className={cn('h-7 cursor-pointer rounded-md border px-2 text-[10.5px]', action.danger === 'medium' ? 'border-line-danger/60 text-ink-danger hover:bg-tint-danger' : 'border-line text-ink-secondary hover:bg-overlay-light')}>{action.label}</button>) : null}</footer>
         </div>
       </div>
       {showLogs ? <ProjectLogDialog project={project} onClose={() => setShowLogs(false)} /> : null}
@@ -165,6 +165,9 @@ function Services({ project, instances, focusId }: { project: Project; instances
           const dot = isUnhealthy ? 'bg-status-warn' : isRunning ? 'bg-status-ok' : 'bg-status-bad'
           const stateText = isUnhealthy ? '不健康' : (STATE_LABEL[state] ?? item.state ?? '—')
           const memLimit = item.mem_limit_mb != null && item.mem_limit_mb > 0 ? `${item.mem_limit_mb} MB` : '未设置'
+          const ports = item.ports ?? []
+          const portsSummary = ports.slice(0, 2).map(portLabel).join('、')
+          const portsTitle = ports.map(portLabel).join('、')
 
           return (
             <div
@@ -191,6 +194,18 @@ function Services({ project, instances, focusId }: { project: Project; instances
                 <span>健康检查 <span className="text-ink-secondary">{HEALTH_LABEL[health] ?? item.health ?? '—'}</span></span>
                 <span>启动 <span className="text-ink-secondary">{item.started_at ? formatMoment(item.started_at) : '—'}</span></span>
                 {item.exit_code != null ? <span>退出码 <span className="tabular-nums text-ink-secondary">{item.exit_code}</span></span> : null}
+                {item.restart_policy ? (
+                  <span>重启 <span className="text-ink-secondary">{restartPolicyLabel(item.restart_policy)}</span></span>
+                ) : null}
+                {ports.length > 0 ? (
+                  <span className="flex min-w-0 max-w-full items-center gap-1">
+                    端口
+                    <span className="mono min-w-0 truncate text-ink-secondary" title={portsTitle}>
+                      {portsSummary}
+                      {ports.length > 2 ? ` +${ports.length - 2}` : ''}
+                    </span>
+                  </span>
+                ) : null}
               </div>
             </div>
           )

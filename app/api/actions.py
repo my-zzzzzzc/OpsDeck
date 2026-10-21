@@ -48,6 +48,11 @@ def execute_action(
     project = db.get(Project, payload.project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
+    if project.lifecycle != "managed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="项目尚未接管,请先在项目页接管后再执行操作",
+        )
 
     server = db.get(Server, project.server_id)
 

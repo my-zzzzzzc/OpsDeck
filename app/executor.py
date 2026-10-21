@@ -15,6 +15,7 @@ import subprocess
 from dataclasses import dataclass
 
 from app.models import Server
+from app.ssh_keys import resolve_ssh_key
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,8 @@ def execute(
         "-p",
         str(port),
     ]
-    # 密钥优先级:调用方显式传入 > 服务器自身配置 > ssh 默认
-    key = ssh_key_path or server.ssh_key_path or ""
+    # 密钥优先级:调用方显式传入 > 服务器自身配置(含本地覆盖) > ssh 默认
+    key = ssh_key_path or resolve_ssh_key(server.ssh_key_path) or ""
     if key:
         argv += ["-i", key, "-o", "IdentitiesOnly=yes"]
     # 用户名必须取自服务器配置:部分云镜像禁用 root,只能以 ubuntu 登录。
@@ -79,6 +80,9 @@ def execute(
             argv,
             capture_output=True,
             text=True,
+            # 远端是 Linux,输出固定 UTF-8;Windows 默认按 GBK 解码会丢内容。
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
